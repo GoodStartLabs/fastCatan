@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <type_traits>
+#include "rng.hpp"
 
 namespace catan {
 
@@ -88,6 +89,9 @@ namespace catan {
         // --- Bank ---
         uint8_t bank[5];     // resource supply: brick, lumber, wool, grain, ore
         uint8_t dev_deck[5]; // dev cards remaining: knight, VP, road building, year of plenty, monopoly
+
+        // --- RNG (per-env xoshiro128++ state) ---
+        Xoshiro128 rng;      // 16 B; seeded in reset_one, advances on dice/dev/steal
     };
 
     // Just for Checking.
@@ -95,8 +99,8 @@ namespace catan {
                   "GameState must be trivially copyable for memcpy cloning");
     static_assert(alignof(GameState) == 64,
                   "GameState must be 64-byte aligned (cache line)");
-    static_assert(sizeof(GameState) == 256,
-                 "GameState must be exactly 4 cache lines; update if layout changes intentionally");
+    static_assert(sizeof(GameState) == 320,
+                 "GameState must be exactly 5 cache lines; update if layout changes intentionally");
     static_assert(std::is_trivially_copyable_v<BoardLayout>,
                   "BoardLayout must be trivially copyable");
 
