@@ -48,13 +48,13 @@ namespace catan {
     // ---------------------------------------------------------------------
     struct alignas(64) GameState {
         // --- Board state ---
-        uint8_t node[54];   // owner + building level packed into one byte each
+        uint8_t node[54];   // bits 0-1: level (00=empty, 01=settlement, 10=city); bits 2-4: owner (000=P0, 001=P1, 010=P2, 011=P3, 111=NO_PLAYER); bits 5-7: unused
         uint8_t edge[72];   // owner id or EDGE_EMPTY
         uint8_t robber_hex; // hex index of current robber
 
         // --- Turn / phase state ---
         uint8_t  dice_roll;    // 0 if not yet rolled this turn, else 2..12
-        uint16_t turn_count;   // monotonic turn counter (termination cap)
+        uint16_t turn_count;  // monotonic turn counter (termination cap)
         Phase    phase;        // INITIAL_PLACEMENT_1 / _2 / MAIN / ENDED
         Flag     flag;         // forced-action override; NONE during normal play
         uint8_t  start_player; // who began initial placement; phase 1 clockwise from here, phase 2 counter-clockwise back to here
