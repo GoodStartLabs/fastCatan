@@ -8,6 +8,17 @@ namespace catan {
     // player-id fields when no player owns the slot
     inline constexpr uint8_t NO_PLAYER = 0xFF;
 
+    // node[] encoding: bits 0-1 = level, bits 2-4 = owner.
+    inline constexpr uint8_t NODE_EMPTY      = 0;
+    inline constexpr uint8_t NODE_SETTLEMENT = 1;
+    inline constexpr uint8_t NODE_CITY       = 2;
+
+    inline constexpr uint8_t node_level(uint8_t n) noexcept { return n & 0x03; }
+    inline constexpr uint8_t node_owner(uint8_t n) noexcept { return (n >> 2) & 0x07; }
+    inline constexpr uint8_t node_pack(uint8_t lvl, uint8_t owner) noexcept {
+        return uint8_t((lvl & 0x03) | ((owner & 0x07) << 2));
+    }
+
     // ---------------------------------------------------------------------
     // Phase: top-level game stage. Drives which actions are legal.
     // ---------------------------------------------------------------------
@@ -79,12 +90,14 @@ namespace catan {
         uint8_t longest_road_owner; // player id, or sentinel if none
         uint8_t largest_army_owner; // player id, or sentinel if none
         bool    dev_card_played;    // current player already played a dev card this turn
-        uint8_t current_player;     // whose turn it is
+        uint8_t current_player;     // whose turn it is (rotates among discarders during DISCARD sub-phase)
+        uint8_t rolling_player;     // who rolled the dice this turn; preserved across sub-phases
 
         // --- Per-player public state (visible to all players) ---
-        uint8_t player_handsize[4];       // total resource cards held
-        uint8_t player_total_dev[4];      // total hidden dev cards held
-        uint8_t player_vp_without_dev[4]; // public VP = total VP minus hidden dev-card VPs
+        uint8_t player_handsize[4];        // total resource cards held
+        uint8_t player_total_dev[4];       // total hidden dev cards held
+        uint8_t player_vp_without_dev[4];  // public VP = total VP minus hidden dev-card VPs
+        uint8_t player_discard_remaining[4]; // cards still owed for DISCARD sub-phase; 0 if none
 
         // --- Bank ---
         uint8_t bank[5];     // resource supply: brick, lumber, wool, grain, ore
