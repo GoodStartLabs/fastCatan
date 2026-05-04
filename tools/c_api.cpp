@@ -91,6 +91,9 @@ uint8_t fcatan_bank(void* p, int r)       noexcept { return ENV(p)->s.bank[r]; }
 uint8_t fcatan_dev_deck(void* p, int d)   noexcept { return ENV(p)->s.dev_deck[d]; }
 
 // --- Test-only mutators (manipulate state for unit tests) ---
+// All setters refresh the incremental action_mask field after mutating
+// state, so subsequent compute_mask calls reflect the change.
+
 // Add `n` of resource `r` to player `pl`, taken from the bank.
 // Keeps player_handsize and bank consistent.
 void fcatan_give_resources(void* p, int pl, int r, uint8_t n) noexcept {
@@ -98,6 +101,7 @@ void fcatan_give_resources(void* p, int pl, int r, uint8_t n) noexcept {
     e->s.player_resources[pl][r] += n;
     e->s.player_handsize[pl]     += n;
     e->s.bank[r]                 -= n;
+    catan::refresh_mask(e->s, e->b);
 }
 
 // Force a player's VP (and public VP). For testing end-of-game triggers.
@@ -105,6 +109,7 @@ void fcatan_set_player_vp(void* p, int pl, uint8_t vp) noexcept {
     auto* e = ENV(p);
     e->s.player_vp[pl]              = vp;
     e->s.player_vp_without_dev[pl]  = vp;
+    catan::refresh_mask(e->s, e->b);
 }
 
 // Force a player's playable dev card count. Updates player_total_dev.
@@ -114,11 +119,64 @@ void fcatan_set_player_dev(void* p, int pl, int type, uint8_t n) noexcept {
     uint8_t total = 0;
     for (int d = 0; d < 5; ++d) total += e->s.player_dev[pl][d];
     e->s.player_total_dev[pl] = total;
+    catan::refresh_mask(e->s, e->b);
 }
 
 // Force a player's knights played count (largest-army setup).
 void fcatan_set_player_knights_played(void* p, int pl, uint8_t n) noexcept {
-    ENV(p)->s.player_knights_played[pl] = n;
+    auto* e = ENV(p);
+    e->s.player_knights_played[pl] = n;
+    catan::refresh_mask(e->s, e->b);
+}
+
+// Place an arbitrary node value (level + owner) directly. Test-only —
+// bypasses placement rules. Use with care.
+void fcatan_set_node(void* p, int node_id, uint8_t level, uint8_t owner) noexcept {
+    auto* e = ENV(p);
+    e->s.node[node_id] = catan::node_pack(level, owner);
+    catan::refresh_mask(e->s, e->b);
+}
+
+// Place an edge owner directly. NO_PLAYER (0xFF) clears the edge.
+void fcatan_set_edge(void* p, int edge_id, uint8_t owner) noexcept {
+    auto* e = ENV(p);
+    e->s.edge[edge_id] = owner;
+    catan::refresh_mask(e->s, e->b);
+}
+
+// Read computed longest-road length (set by check_longest_road).
+uint8_t fcatan_player_road_length(void* p, int pl) noexcept {
+    return ENV(p)->s.player_road_length[pl];
+}
+
+// Re-run check_longest_road + check_largest_army on the current state.
+// Useful after test setters mutate node/edge/knight counts directly.
+void fcatan_recompute_awards(void* p) noexcept {
+    auto* e = ENV(p);
+    catan::recompute_awards(e->s);
+    catan::refresh_mask(e->s, e->b);
+}
+
+// Reset using a caller-provided BoardLayout. For differential testing.
+//   hex_resource: 19 bytes (0=brick, 1=lumber, 2=wool, 3=grain, 4=ore, 5=desert)
+//   hex_number:   19 bytes (0 for desert, 2..12 skipping 7 elsewhere)
+//   port_type:    9 bytes (0..4 = 2:1 specific, 5 = 3:1 generic)
+//   port_layout:  0 = pattern A (Catanatron-aligned), 1 = pattern B
+//   seed:         per-env RNG seed
+//   start_player_override: 0..3 to force, 0xFF to randomize
+void fcatan_reset_with_layout(void* p,
+                                const uint8_t* hex_resource,
+                                const uint8_t* hex_number,
+                                const uint8_t* port_type,
+                                uint8_t port_layout,
+                                uint64_t seed,
+                                uint8_t start_player_override) noexcept {
+    auto* e = ENV(p);
+    std::memcpy(e->b.hex_resource, hex_resource, 19);
+    std::memcpy(e->b.hex_number,   hex_number,   19);
+    std::memcpy(e->b.port_type,    port_type,    9);
+    e->b.port_layout = port_layout;
+    catan::reset_with_layout(e->s, e->b, seed, start_player_override);
 }
 
 // --- Mask + state cloning helpers ---
@@ -146,6 +204,21 @@ void fcatan_copy_state(const void* src, void* dst) noexcept {
 
 uint8_t fcatan_state_equal(const void* a, const void* b) noexcept {
     return std::memcmp(a, b, sizeof(CatanEnv)) == 0 ? 1 : 0;
+}
+
+// FNV-1a 64-bit hash over the entire CatanEnv byte image. Used for perft
+// determinism regression tests — same seed + same action sequence must
+// produce the same hash on any compliant build.
+uint64_t fcatan_state_hash(const void* p) noexcept {
+    constexpr uint64_t FNV_OFFSET = 0xcbf29ce484222325ULL;
+    constexpr uint64_t FNV_PRIME  = 0x100000001b3ULL;
+    const uint8_t* bytes = static_cast<const uint8_t*>(p);
+    uint64_t h = FNV_OFFSET;
+    for (size_t i = 0; i < sizeof(CatanEnv); ++i) {
+        h ^= bytes[i];
+        h *= FNV_PRIME;
+    }
+    return h;
 }
 
 // ============================================================

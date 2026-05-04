@@ -48,6 +48,31 @@ target_link_libraries(fastcatan PRIVATE fastcatan_core)
 target_compile_options(fastcatan PRIVATE
     $<$<CONFIG:Release>:${FCATAN_RELEASE_FLAGS}>)
 
+# --------------------------------------------------------------------
+# Python extension via nanobind (built when invoked through scikit-build-core).
+# --------------------------------------------------------------------
+if(SKBUILD)
+    find_package(Python 3.10 REQUIRED COMPONENTS Interpreter Development.Module)
+    find_package(nanobind CONFIG REQUIRED)
+
+    nanobind_add_module(_fastcatan
+        STABLE_ABI
+        NB_STATIC
+        bindings/pycatan/bindings.cpp
+    )
+    target_link_libraries(_fastcatan PRIVATE fastcatan_core)
+    # Nanobind needs RTTI + exceptions, so DON'T apply our -fno-* flags here.
+    # Core library is still built without them; this binding TU compiles
+    # with the compiler defaults.
+    target_compile_options(_fastcatan PRIVATE -O3 -march=native)
+
+    install(TARGETS _fastcatan LIBRARY DESTINATION fastcatan)
+    install(FILES python/fastcatan/__init__.py
+                  python/fastcatan/gym_env.py
+                  python/fastcatan/pettingzoo_env.py
+            DESTINATION fastcatan)
+endif()
+
 # Throughput benchmarks.
 add_executable(bench_step    bench/bench_step.cpp)
 add_executable(bench_batched bench/bench_batched.cpp)

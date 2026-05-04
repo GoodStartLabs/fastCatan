@@ -1,0 +1,28 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "nanobind>=2.0"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "fastcatan"
+version = "0.1.0"
+description = "High-throughput Catan simulator with Python bindings"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "fastCatan" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+]
+
+[tool.scikit-build]
+minimum-version = "0.10"
+cmake.version = ">=3.27"
+cmake.build-type = "Release"
+build-dir = "build/{wheel_tag}"
+wheel.packages = ["python/fastcatan"]
+# Reuse our top-level CMakeLists; SKBUILD flag enables the nanobind branch.
+cmake.source-dir = "."
+
+[tool.scikit-build.cmake.define]
+CMAKE_BUILD_TYPE = "Release"

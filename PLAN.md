@@ -4,7 +4,7 @@
 
 Author is writing on RL for 4-player Settlers of Catan. Thesis goal: an RL agent that beats Alpha-Beta with statistical significance (>25% win rate over ≥1000 four-player games). The bottleneck the thesis explicitly calls out is simulator throughput — existing Python sim (Catanatron) can't generate self-play at the volume modern RL needs.
 
-This plan designs `fastCatan`: a greenfield C++20 simulator with nanobind Python bindings, Gymnasium interface, targeting **5×10⁷ steps/sec/node** by milestone 4, with full 4-player rules including player-to-player trading intact. Correctness is continuously cross-validated against Catanatron as ground truth.
+This plan designs `fastCatan`: a greenfield C++20 simulator with nanobind Python bindings, Gymnasium interface, targeting **5×10⁷ steps/sec/node** by milestone 4, with full 4-player rules including player-to-player trading intact. Correctness is enforced by invariant fuzzing, hand-built rule unit tests, and perft-style determinism hashes.
 
 Decisions confirmed by user: greenfield C++, Linux HPC only, full trading from M2.
 
@@ -51,11 +51,10 @@ fastCatan/
 │   ├── __init__.py
 │   ├── gym_env.py                     # single-agent wrapper + opponent hook
 │   ├── pettingzoo_env.py              # M3
-│   ├── catanatron_diff.py             # differential test harness
 │   └── benchmarks/throughput.py
 ├── tests/
 │   ├── cpp/{test_rules,test_mask,test_longest_road,test_determinism}.cpp
-│   └── python/{test_gym_api,test_differential,test_invariants}.py
+│   └── python/{test_gym_api,test_invariants}.py
 └── bench/bench_step.cpp               # Google Benchmark, pure-C++ numbers
 ```
 
@@ -170,10 +169,9 @@ For trading-net training (thesis M3+): a PettingZoo AEC wrapper yields control t
 
 Three-pillar strategy, ordered by ROI:
 
-1. **Differential testing against Catanatron.** Generate 10k random-legal sequences via fastCatan's own mask, replay in Catanatron, assert equality on resources, VP, occupancy, phase, dice, dev deck after every step. Commit disagreement list as a pinned test suite. Catanatron is the ground truth.
-2. **Property/invariant fuzz.** Run 10⁷ random games, assert after every step: `sum(resources_in_play) + sum(bank) == 95`; `sum(dev_deck) + sum(held) + sum(played_knights) == 25`; `vp_public[i] + vp_hidden[i] ≤ 12`; settlement distance-rule; road connectivity; mask nonempty unless terminal. `assert()` macros — on in debug/CI, off in release.
-3. **Perft-style determinism.** Fixed seed + fixed random policy hash → 100k steps → hash of final state. Committed. Any refactor that changes the hash breaks CI.
-4. **Unit tests.** ~50 handwritten rule corner cases (longest-road ties, road-cut-by-settlement, largest-army transfers, port 2:1 without resources, trade offered to player at 7-card limit, YoP with empty bank, etc.). Mirror Catanatron's own test corpus where possible.
+1. **Property/invariant fuzz.** Run 10⁷ random games, assert after every step: `sum(resources_in_play) + sum(bank) == 95`; `sum(dev_deck) + sum(held) + sum(played_knights) == 25`; `vp_public[i] + vp_hidden[i] ≤ 12`; settlement distance-rule; road connectivity; mask nonempty unless terminal. `assert()` macros — on in debug/CI, off in release.
+2. **Perft-style determinism.** Fixed seed + fixed random policy hash → 100k steps → hash of final state. Committed. Any refactor that changes the hash breaks CI.
+3. **Unit tests.** ~50 handwritten rule corner cases (longest-road ties, road-cut-by-settlement, largest-army transfers, port 2:1 without resources, trade offered to player at 7-card limit, YoP with empty bank, etc.).
 
 ## Milestones (aligned with the thesis's 5 × 4-week blocks)
 
@@ -186,19 +184,17 @@ Principle: **RL work is unblocked by end of M1**; every later milestone is addit
 - `GameState`, `reset_one`, `step_one`, `write_obs`. No incremental mask — recompute legality on demand.
 - Rules: initial placement, rolling, all building, buy-dev, play-knight + robber, bank/port trading. **Other dev cards and player-to-player trading deferred to M2** (scope cut to hit date).
 - Single-env Gymnasium wrapper.
-- Differential test harness vs Catanatron (green on implemented subset).
 - First throughput benchmark.
 - **Target: 5×10⁵ steps/sec.** RL researcher can start PPO vs random opponent on a crippled-but-correct Catan.
 
 ### M2 — Weeks 5–8 (June): Full Rules + Batching
 
 - All dev cards (Year-of-Plenty, Road-Builder, Monopoly). VP dev-card hidden count.
-- Longest-road algorithm in `src/catan/longest_road.cpp` with its own test corpus (hand-built positions with known-correct lengths, ported from Catanatron's test cases).
+- Longest-road algorithm in `src/catan/longest_road.cpp` with its own test corpus of hand-built positions with known-correct lengths.
 - Player-to-player trading as a sub-phase (compositional encoding).
 - `BatchedEnv` with OpenMP parallel-for.
 - DLPack zero-copy obs/mask/reward/done tensors via nanobind.
 - Fuzzer passes 10⁷ random games with zero invariant violations.
-- Differential test: 10k-step sequences match Catanatron exactly.
 - **Target: 5×10⁶ steps/sec ("millions of steps/sec" threshold hit).**
 
 ### M3 — Weeks 9–12 (July): Incremental Mask + Correctness Lockdown
@@ -231,9 +227,9 @@ Principle: **RL work is unblocked by end of M1**; every later milestone is addit
 
 ### Risk 1: Longest Road is a graph problem with subtle corner cases
 
-Road length on a graph with opponent-cuts is hamiltonian-path-ish. Getting it wrong fails differential tests only in long games — hard to debug.
+Road length on a graph with opponent-cuts is hamiltonian-path-ish. Getting it wrong is silent in short games and hard to debug in long ones.
 
-**Mitigation.** Isolate `longest_road.cpp` from day one. Write its tests first. Port Catanatron's test positions into our corpus (~200 boards, each with known length per player). Run on every commit. Never write this from memory.
+**Mitigation.** Isolate `longest_road.cpp` from day one. Write its tests first. Hand-build a corpus of ~200 positions, each with the known correct length per player, covering ties, cuts by opponent settlement, branching, and cycle cases. Run on every commit. Never write this from memory.
 
 ### Risk 2: Incremental mask goes out of sync with state
 
@@ -259,13 +255,11 @@ At 5×10⁷ steps/sec with N=4096 envs, a `step()` call is ~80 µs of native wor
 8. `include/catan/batched_env.hpp` + `src/catan/batched_env.cpp` — batched stepping (M2)
 9. `bindings/pycatan/bindings.cpp` — nanobind exposure
 10. `python/fastcatan/gym_env.py` — single-agent wrapper
-11. `python/fastcatan/catanatron_diff.py` — differential test harness
-12. `bench/bench_step.cpp` + `python/fastcatan/benchmarks/throughput.py` — benchmarks
+11. `bench/bench_step.cpp` + `python/fastcatan/benchmarks/throughput.py` — benchmarks
 
 ## Verification
 
-- **Correctness:** `pytest tests/python/test_differential.py` runs 10k random sequences through both fastCatan and Catanatron, diffs every step. Must pass green before any throughput claim is made.
-- **Invariants:** `ctest -R invariants` runs the 10⁷-game fuzz loop.
+- **Invariants:** `ctest -R invariants` runs the 10⁷-game fuzz loop. Must pass green before any throughput claim is made.
 - **Determinism:** `ctest -R perft` runs fixed-seed/fixed-policy 100k-step trajectory, compares hash to the committed value.
 - **Throughput:** `python -m fastcatan.benchmarks.throughput --n-envs 4096 --steps 100000 --warmup 1000` reports steps/sec. Run 3× under `numactl --cpubind=0 --membind=0`; take median. Gate on per-milestone target.
 - **RL smoke test (M2 onward):** `python scripts/ppo_smoke.py` — 1M-step PPO run vs random opponent, must reach >90% win rate.

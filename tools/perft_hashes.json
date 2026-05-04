@@ -1,0 +1,52 @@
+{
+  "seed=42 steps=50": {
+    "hash": 9136045300302585740,
+    "steps_taken": 50,
+    "terminated_early": 0
+  },
+  "seed=42 steps=200": {
+    "hash": 11531573765142643138,
+    "steps_taken": 200,
+    "terminated_early": 0
+  },
+  "seed=42 steps=1000": {
+    "hash": 17851520279239198707,
+    "steps_taken": 1000,
+    "terminated_early": 0
+  },
+  "seed=7 steps=100": {
+    "hash": 3660299334372530351,
+    "steps_taken": 100,
+    "terminated_early": 0
+  },
+  "seed=7 steps=500": {
+    "hash": 6939703509901257397,
+    "steps_taken": 500,
+    "terminated_early": 0
+  },
+  "seed=123 steps=1000": {
+    "hash": 7567382615432214668,
+    "steps_taken": 1000,
+    "terminated_early": 0
+  },
+  "seed=999 steps=2000": {
+    "hash": 6989206078041006892,
+    "steps_taken": 2000,
+    "terminated_early": 0
+  },
+  "seed=0 steps=100": {
+    "hash": 4008862460671011898,
+    "steps_taken": 100,
+    "terminated_early": 0
+  },
+  "seed=1 steps=100": {
+    "hash": 13521310089501922946,
+    "steps_taken": 100,
+    "terminated_early": 0
+  },
+  "seed=2 steps=100": {
+    "hash": 11615263989950640625,
+    "steps_taken": 100,
+    "terminated_early": 0
+  }
+}

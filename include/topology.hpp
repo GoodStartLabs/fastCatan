@@ -489,17 +489,18 @@ namespace catan::topology {
     // form the port edge. Types (2:1 specific / 3:1 generic) are shuffled onto
     // the chosen pattern's 9 slots at reset.
     //
-    // Pattern A: clockwise from top-left.
+    // Pattern A: matches Catanatron's standard port placement. Used as the
+    // canonical layout for cross-validation against Catanatron.
     inline constexpr std::array<std::array<uint8_t, 2>, 9> port_to_node_A = {{
-        {{ 0x00, 0x01 }},
-        {{ 0x03, 0x04 }},
-        {{ 0x0E, 0x0F }},
-        {{ 0x1A, 0x25 }},
-        {{ 0x2D, 0x2E }},
-        {{ 0x2F, 0x30 }},
-        {{ 0x32, 0x33 }},
-        {{ 0x1C, 0x26 }},
-        {{ 0x07, 0x11 }},
+        {{ 0x00, 0x01 }},   // (0, 1)
+        {{ 0x03, 0x04 }},   // (3, 4)
+        {{ 0x06, 0x0E }},   // (6, 14)
+        {{ 0x07, 0x11 }},   // (7, 17)
+        {{ 0x1A, 0x25 }},   // (26, 37)
+        {{ 0x1C, 0x26 }},   // (28, 38)
+        {{ 0x2D, 0x2E }},   // (45, 46)
+        {{ 0x2F, 0x30 }},   // (47, 48)
+        {{ 0x33, 0x34 }},   // (51, 52)
     }};
 
     // Pattern B: 180-degree rotation of A (node x -> 53-x). Disjoint from A

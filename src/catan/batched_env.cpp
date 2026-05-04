@@ -33,20 +33,24 @@ void batched_env_init(BatchedEnv& env, uint32_t n_envs, uint64_t master_seed) no
     env.n            = n_envs;
     env.states       = aligned_array<GameState>(n_envs);
     env.layouts      = aligned_array<BoardLayout>(n_envs);
+    env.last_winner  = aligned_array<uint8_t>(n_envs);
     env.seed_counter = master_seed;
 
     for (uint32_t i = 0; i < n_envs; ++i) {
         new (&env.states[i])  GameState{};
         new (&env.layouts[i]) BoardLayout{};
+        env.last_winner[i] = NO_PLAYER;
     }
 }
 
 void batched_env_destroy(BatchedEnv& env) noexcept {
-    if (env.states)  std::free(env.states);
-    if (env.layouts) std::free(env.layouts);
-    env.states  = nullptr;
-    env.layouts = nullptr;
-    env.n       = 0;
+    if (env.states)      std::free(env.states);
+    if (env.layouts)     std::free(env.layouts);
+    if (env.last_winner) std::free(env.last_winner);
+    env.states      = nullptr;
+    env.layouts     = nullptr;
+    env.last_winner = nullptr;
+    env.n           = 0;
 }
 
 void batched_env_reset(BatchedEnv& env) noexcept {
@@ -76,6 +80,16 @@ void batched_env_step(BatchedEnv& env,
         dones_out[i]   = done;
 
         if (done) {
+            // Capture winner before auto-reset wipes the state.
+            uint8_t winner = NO_PLAYER;
+            for (uint8_t p = 0; p < 4; ++p) {
+                if (env.states[i].player_vp[p] >= 10) {
+                    winner = p;
+                    break;
+                }
+            }
+            env.last_winner[i] = winner;
+
             uint64_t seed = derive_seed(env.seed_counter, uint32_t(i));
             reset_one(env.states[i], env.layouts[i], seed);
         }
@@ -95,12 +109,15 @@ void batched_env_write_obs(const BatchedEnv& env, float* out) noexcept {
 }
 
 void batched_env_write_masks(const BatchedEnv& env, uint64_t* out) noexcept {
+    // Read from the incrementally-maintained s.action_mask field. step_one
+    // and reset_one keep it current. ~free vs the previous full recompute.
 #if FCATAN_HAVE_OPENMP
     #pragma omp parallel for schedule(static)
 #endif
     for (int32_t i = 0; i < int32_t(env.n); ++i) {
-        compute_mask(env.states[i], env.layouts[i],
-                      out + std::size_t(i) * MASK_WORDS);
+        std::memcpy(out + std::size_t(i) * MASK_WORDS,
+                    env.states[i].action_mask,
+                    sizeof(uint64_t) * MASK_WORDS);
     }
 }
 

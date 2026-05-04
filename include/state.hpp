@@ -112,6 +112,11 @@ namespace catan {
 
         // --- RNG (per-env xoshiro128++ state) ---
         Xoshiro128 rng;      // 16 B; seeded in reset_one, advances on dice/dev/steal
+
+        // --- Incrementally maintained legal-action mask (320 bits over 5 words) ---
+        // Updated after every step_one. Consumers read this directly instead
+        // of paying for a full recompute. PLAN.md M3 deliverable.
+        uint64_t action_mask[5];
     };
 
     // Just for Checking.
@@ -119,8 +124,8 @@ namespace catan {
                   "GameState must be trivially copyable for memcpy cloning");
     static_assert(alignof(GameState) == 64,
                   "GameState must be 64-byte aligned (cache line)");
-    static_assert(sizeof(GameState) == 320,
-                 "GameState must be exactly 5 cache lines; update if layout changes intentionally");
+    static_assert(sizeof(GameState) == 384,
+                 "GameState must be exactly 6 cache lines; update if layout changes intentionally");
     static_assert(std::is_trivially_copyable_v<BoardLayout>,
                   "BoardLayout must be trivially copyable");
 

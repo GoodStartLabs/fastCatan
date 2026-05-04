@@ -1,10 +1,23 @@
 #include "rules.hpp"
 #include "topology.hpp"
+#include "mask.hpp"   // for catan::compute_mask declaration (debug assert in step_one)
 
+#include <cassert>
 #include <cstring>
 #include <utility>
 
 namespace catan {
+
+// Forward decl: full-recompute mask body lives at the bottom of the file
+// (after all sub-phase helpers). Both reset_one and step_one call this
+// to refresh GameState::action_mask after any state mutation.
+namespace { inline void refresh_action_mask(GameState& s, const BoardLayout& b) noexcept; }
+
+// Forward decl for surgical update covering ONLY the trade-compose bit
+// range [268, 296). Used after ADD/REMOVE GIVE/WANT compose actions —
+// those don't touch flag/dice/resources/bank, so other mask bits are
+// unaffected and we can skip the full recompute.
+namespace { inline void refresh_compose_mask_bits(GameState& s, const BoardLayout& b) noexcept; }
 
 namespace {
 
@@ -147,6 +160,9 @@ void reset_one(GameState& s, BoardLayout& b, uint64_t seed) noexcept {
 
     // Dev deck stocked.
     std::memcpy(s.dev_deck, INITIAL_DEV_DECK, sizeof(INITIAL_DEV_DECK));
+
+    // Initialize incremental action_mask field.
+    refresh_action_mask(s, b);
 }
 
 // =====================================================================
@@ -1264,10 +1280,53 @@ inline void handle_main(GameState& s, const BoardLayout& b, uint32_t action) noe
 
 }  // namespace
 
+void recompute_awards(GameState& s) noexcept {
+    check_longest_road(s);
+    check_largest_army(s);
+}
+
+void refresh_mask(GameState& s, const BoardLayout& b) noexcept {
+    refresh_action_mask(s, b);
+}
+
+void reset_with_layout(GameState& s, const BoardLayout& b,
+                        uint64_t seed, uint8_t start_player_override) noexcept {
+    std::memset(&s, 0, sizeof(s));
+    xoshiro_seed(s.rng, seed);
+
+    std::memset(s.edge, NO_PLAYER, sizeof(s.edge));
+    s.robber_hex = find_desert(b);
+
+    s.phase = Phase::INITIAL_PLACEMENT_1;
+    s.flag  = Flag::NONE;
+    s.start_player = (start_player_override < 4)
+        ? start_player_override
+        : uint8_t(s.rng.bounded(4));
+    s.current_player = s.start_player;
+
+    for (uint8_t p = 0; p < 4; ++p) {
+        s.player_settlement_count[p] = 5;
+        s.player_city_count[p]       = 4;
+        s.player_road_count[p]       = 15;
+    }
+
+    s.longest_road_owner = NO_PLAYER;
+    s.largest_army_owner = NO_PLAYER;
+    s.trade_proposer     = NO_PLAYER;
+
+    for (uint8_t r = 0; r < 5; ++r) s.bank[r] = 19;
+    std::memcpy(s.dev_deck, INITIAL_DEV_DECK, sizeof(INITIAL_DEV_DECK));
+
+    refresh_action_mask(s, b);
+}
+
 void step_one(GameState& s, const BoardLayout& b, uint32_t action,
               float& reward, uint8_t& done) noexcept {
     reward = 0.0f;
     done = 0;
+
+    Phase phase_before = s.phase;
+    uint8_t actor = s.current_player;
 
     switch (s.phase) {
         case Phase::INITIAL_PLACEMENT_1:
@@ -1281,7 +1340,39 @@ void step_one(GameState& s, const BoardLayout& b, uint32_t action,
             break;
     }
 
-    if (s.phase == Phase::ENDED) done = 1;
+    if (s.phase == Phase::ENDED) {
+        done = 1;
+        // If this action triggered the terminal transition, the actor (the
+        // player whose action it was) is the winner. Reward is from actor's
+        // perspective: +1 win, 0 if game was already over.
+        if (phase_before != Phase::ENDED) {
+            // Find winner; should equal `actor` since only actor's action
+            // pushed VP over the threshold.
+            for (uint8_t p = 0; p < 4; ++p) {
+                if (s.player_vp[p] >= 10) {
+                    reward = (p == actor) ? 1.0f : -1.0f;
+                    break;
+                }
+            }
+        }
+    }
+
+    // Refresh the incremental action_mask field. Surgical fast path for
+    // trade ADD/REMOVE compose actions; full recompute for everything else.
+    if (action >= action::TRADE_ADD_GIVE_BASE && action < action::TRADE_OPEN) {
+        refresh_compose_mask_bits(s, b);
+    } else {
+        refresh_action_mask(s, b);
+    }
+#ifndef NDEBUG
+    {
+        uint64_t expected[5];
+        compute_mask(s, b, expected);
+        for (uint32_t _i = 0; _i < 5; ++_i) {
+            assert(s.action_mask[_i] == expected[_i] && "incremental mask drift");
+        }
+    }
+#endif
 }
 
 }  // namespace catan
@@ -1293,8 +1384,12 @@ void step_one(GameState& s, const BoardLayout& b, uint32_t action,
 
 namespace catan {
 
-void compute_mask(const GameState& s, [[maybe_unused]] const BoardLayout& b,
-                  uint64_t mask[MASK_WORDS]) noexcept {
+// Internal full-recompute body. Writes into the provided 5-word buffer.
+// Used by both the incremental-mask field updater (refresh_action_mask)
+// and the public compute_mask wrapper.
+static inline void recompute_full(const GameState& s,
+                                   [[maybe_unused]] const BoardLayout& b,
+                                   uint64_t mask[MASK_WORDS]) noexcept {
     for (uint32_t i = 0; i < MASK_WORDS; ++i) mask[i] = 0;
 
     auto set_bit = [&](uint32_t a) noexcept {
@@ -1496,5 +1591,70 @@ void compute_mask(const GameState& s, [[maybe_unused]] const BoardLayout& b,
         set_bit(action::TRADE_CANCEL);
     }
 }
+
+// Public API. Writes recomputed mask into the caller's buffer. Independent
+// of the incremental field on GameState.
+void compute_mask(const GameState& s, const BoardLayout& b,
+                  uint64_t mask[MASK_WORDS]) noexcept {
+    recompute_full(s, b, mask);
+}
+
+// Definition for the top-of-file forward decl. Called by reset_one /
+// step_one after any state mutation to keep s.action_mask current.
+namespace {
+inline void refresh_action_mask(GameState& s, const BoardLayout& b) noexcept {
+    recompute_full(s, b, s.action_mask);
+}
+
+// Surgical updater for trade-compose actions. Only the compose bit range
+// [268, 296) can be affected because ADD/REMOVE GIVE/WANT mutate only
+// trade scratch — not flag, dice_roll, phase, resources, or bank.
+inline void refresh_compose_mask_bits(GameState& s, const BoardLayout& b) noexcept {
+    // Compose bits all sit in word 4: bit 268 = position 12, bit 295 = position 39.
+    // Range is positions 12..39 inclusive (28 bits).
+    constexpr uint64_t COMPOSE_BIT_RANGE = ((uint64_t(1) << 28) - 1) << 12;
+    s.action_mask[4] &= ~COMPOSE_BIT_RANGE;
+
+    // Compose bits are only legal when MAIN, post-roll, no flag.
+    if (s.phase != Phase::MAIN || s.flag != Flag::NONE || s.dice_roll == 0) {
+        (void)b;
+        return;
+    }
+
+    auto set_bit = [&](uint32_t a) noexcept {
+        s.action_mask[a >> 6] |= (uint64_t(1) << (a & 63));
+    };
+
+    uint8_t pl = s.current_player;
+    for (uint8_t r = 0; r < 5; ++r) {
+        if (s.player_resources[pl][r] > s.trade_give[r])
+            set_bit(action::TRADE_ADD_GIVE_BASE + r);
+        if (s.trade_give[r] > 0)
+            set_bit(action::TRADE_REMOVE_GIVE_BASE + r);
+        if (s.trade_want[r] < 19)
+            set_bit(action::TRADE_ADD_WANT_BASE + r);
+        if (s.trade_want[r] > 0)
+            set_bit(action::TRADE_REMOVE_WANT_BASE + r);
+    }
+    // TRADE_OPEN: scratch valid AND proposer holds the give bundle.
+    bool give_any = false, want_any = false;
+    for (uint8_t r = 0; r < 5; ++r) {
+        if (s.trade_give[r] > 0) give_any = true;
+        if (s.trade_want[r] > 0) want_any = true;
+    }
+    if (give_any && want_any) {
+        bool ok = true;
+        for (uint8_t r = 0; r < 5; ++r) {
+            if (s.player_resources[pl][r] < s.trade_give[r]) { ok = false; break; }
+        }
+        if (ok) set_bit(action::TRADE_OPEN);
+    }
+    // TRADE_CANCEL: scratch nonempty.
+    if (give_any || want_any) {
+        set_bit(action::TRADE_CANCEL);
+    }
+    (void)b;
+}
+}  // namespace
 
 }  // namespace catan

@@ -1,0 +1,17 @@
+# ninja log v7
+1	202	1777586665727267908	CMakeFiles/fastcatan_core.dir/src/catan/batched_env.cpp.o	4aeb7030c285d53f
+1	219	1777586665727176953	CMakeFiles/fastcatan_core.dir/src/catan/obs.cpp.o	633d4ce306833d64
+219	329	1777586665945162910	CMakeFiles/fastcatan.dir/tools/c_api.cpp.o	f5eb9409df315b2d
+1	480	1777586665727034957	CMakeFiles/fastcatan_core.dir/src/catan/rules.cpp.o	cfb0097ab1caf8d3
+481	541	1777586666206547113	libfastcatan_core.a	c0fbd3027057c302
+7	624	1777586665733435486	CMakeFiles/nanobind-static.dir/.venv/lib/python3.13/site-packages/nanobind/src/nb_static_property.cpp.o	cc5dae5208cd970f
+13	680	1777586665739154493	CMakeFiles/nanobind-static.dir/.venv/lib/python3.13/site-packages/nanobind/src/trampoline.cpp.o	4e3f1bf65a6a279d
+12	711	1777586665737955902	CMakeFiles/nanobind-static.dir/.venv/lib/python3.13/site-packages/nanobind/src/error.cpp.o	59027bfa194d428b
+6	741	1777586665731911946	CMakeFiles/nanobind-static.dir/.venv/lib/python3.13/site-packages/nanobind/src/nb_ndarray.cpp.o	f44fd9e90c6b9dcc
+204	753	1777586665929775506	CMakeFiles/nanobind-static.dir/.venv/lib/python3.13/site-packages/nanobind/src/implicit.cpp.o	c3d4093fc684a7a6
+11	779	1777586665736687562	CMakeFiles/nanobind-static.dir/.venv/lib/python3.13/site-packages/nanobind/src/common.cpp.o	e32b06ebd630ea53
+541	826	1777586666267059799	CMakeFiles/bench_step.dir/bench/bench_step.cpp.o	6d2c411b0efe8d3f
+2	831	1777586665727527401	CMakeFiles/nanobind-static.dir/.venv/lib/python3.13/site-packages/nanobind/src/nb_type.cpp.o	f9fd03b12a9c7598
+1	833	1777586665727444362	CMakeFiles/nanobind-static.dir/.venv/lib/python3.13/site-packages/nanobind/src/nb_func.cpp.o	ce9f5dd4f6486b60
+1	836	1777586665727355198	CMakeFiles/nanobind-static.dir/.venv/lib/python3.13/site-packages/nanobind/src/nb_internals.cpp.o	3764767893e630d7
+4	838	1777586665729873002	CMakeFiles/nanobind-static.dir/.venv/lib/python3.13/site-packages/nanobind/src/nb_enum.cpp.o	bb2d55557a3d1538

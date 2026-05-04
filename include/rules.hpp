@@ -12,6 +12,25 @@ namespace catan {
     // Same `seed` always produces identical (BoardLayout, GameState).
     void reset_one(GameState& s, BoardLayout& b, uint64_t seed) noexcept;
 
+    // Recompute and apply award titles (longest road + largest army) given
+    // current node/edge/knight state. Test-only entry — normally driven
+    // implicitly by step_one after relevant actions.
+    void recompute_awards(GameState& s) noexcept;
+
+    // Refresh the GameState::action_mask field by full recompute. Call
+    // after any direct state mutation that bypasses step_one (e.g. test
+    // setters that poke resources or pieces). step_one + reset_one already
+    // refresh internally.
+    void refresh_mask(GameState& s, const BoardLayout& b) noexcept;
+
+    // Initialize an episode using a CALLER-PROVIDED BoardLayout. Skips the
+    // hex/port randomization that reset_one performs. RNG is seeded from
+    // `seed`; start_player is set from `start_player_override` if < 4,
+    // otherwise drawn from the RNG. Used by the differential test to
+    // share board state with another simulator (e.g. Catanatron).
+    void reset_with_layout(GameState& s, const BoardLayout& b,
+                            uint64_t seed, uint8_t start_player_override = 0xFF) noexcept;
+
     // Advance one env by one action. Illegal actions are no-ops (state
     // unchanged, reward 0, done unchanged). Caller is responsible for
     // passing only mask-legal actions in production; the safety net is

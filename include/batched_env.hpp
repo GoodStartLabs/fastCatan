@@ -17,6 +17,7 @@ namespace catan {
         GameState*  states;          // aligned array, length n
         BoardLayout* layouts;        // length n
         uint64_t    seed_counter;    // monotonic per-env seed derivation
+        uint8_t*    last_winner;     // last game's winner per env, NO_PLAYER if none
     };
 
     // Allocate buffers, zero state, seed each env from `master_seed` via
