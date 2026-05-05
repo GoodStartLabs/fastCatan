@@ -1,1 +1,48 @@
+# macOS metadata
 .DS_Store
+
+# Python caches / bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Editable-install / egg-info
+*.egg-info/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+
+# Build outputs
+build/
+dist/
+
+# C++ artifacts
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.gch
+*.pch
+
+# CMake / scikit-build-core scratch
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+_deps/
+
+# IDE noise
+.vscode/
+.idea/
+*.swp
+*~
+
+# Generated artifacts (regeneratable)
+tools/topology.png
+
+# Training output / checkpoints (uncomment if you commit them)
+# checkpoints/
+# logs/
