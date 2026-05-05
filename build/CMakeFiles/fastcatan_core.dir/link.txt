@@ -1,2 +1,0 @@
-"/usr/bin/ar" qc libfastcatan_core.a CMakeFiles/fastcatan_core.dir/src/catan/rules.cpp.o CMakeFiles/fastcatan_core.dir/src/catan/obs.cpp.o CMakeFiles/fastcatan_core.dir/src/catan/batched_env.cpp.o
-"/usr/bin/ranlib" libfastcatan_core.a

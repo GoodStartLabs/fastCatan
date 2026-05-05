@@ -1,6 +1,0 @@
-/Users/USER/Desktop/catan/fastCatan/build/CMakeFiles/fastcatan_core.dir
-/Users/USER/Desktop/catan/fastCatan/build/CMakeFiles/fastcatan.dir
-/Users/USER/Desktop/catan/fastCatan/build/CMakeFiles/bench_step.dir
-/Users/USER/Desktop/catan/fastCatan/build/CMakeFiles/bench_batched.dir
-/Users/USER/Desktop/catan/fastCatan/build/CMakeFiles/edit_cache.dir
-/Users/USER/Desktop/catan/fastCatan/build/CMakeFiles/rebuild_cache.dir

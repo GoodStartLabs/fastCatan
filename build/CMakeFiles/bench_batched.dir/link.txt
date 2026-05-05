@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG -flto=thin -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/bench_batched.dir/bench/bench_batched.cpp.o -o bench_batched  libfastcatan_core.a

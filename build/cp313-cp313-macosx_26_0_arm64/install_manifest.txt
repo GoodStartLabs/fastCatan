@@ -1,7 +1,0 @@
-/var/folders/08/rsx4h1d13pq86h66nsb1zh500000gn/T/tmpjemqoarm/wheel/platlib/fastcatan/_fastcatan.cpython-313-darwin.so
-/var/folders/08/rsx4h1d13pq86h66nsb1zh500000gn/T/tmpjemqoarm/wheel/platlib/fastcatan/__init__.py
-/var/folders/08/rsx4h1d13pq86h66nsb1zh500000gn/T/tmpjemqoarm/wheel/platlib/fastcatan/gym_env.py
-/var/folders/08/rsx4h1d13pq86h66nsb1zh500000gn/T/tmpjemqoarm/wheel/platlib/fastcatan/pettingzoo_env.py
-/var/folders/08/rsx4h1d13pq86h66nsb1zh500000gn/T/tmpjemqoarm/wheel/platlib/fastcatan/tournament.py
-/var/folders/08/rsx4h1d13pq86h66nsb1zh500000gn/T/tmpjemqoarm/wheel/platlib/fastcatan/alphabeta.py
-/var/folders/08/rsx4h1d13pq86h66nsb1zh500000gn/T/tmpjemqoarm/wheel/platlib/fastcatan/selfplay.py

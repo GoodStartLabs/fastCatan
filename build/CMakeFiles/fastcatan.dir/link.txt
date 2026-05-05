@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG -flto=thin -arch arm64 -dynamiclib -Wl,-headerpad_max_install_names -o libfastcatan.dylib -install_name @rpath/libfastcatan.dylib CMakeFiles/fastcatan.dir/tools/c_api.cpp.o  libfastcatan_core.a
