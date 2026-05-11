@@ -24,7 +24,7 @@ def test_module_constants():
     fails = 0
     fails += fail(fc.OBS_SIZE == 724, f"OBS_SIZE = {fc.OBS_SIZE}")
     fails += fail(fc.MASK_WORDS == 5, f"MASK_WORDS = {fc.MASK_WORDS}")
-    fails += fail(fc.NUM_ACTIONS == 296, f"NUM_ACTIONS = {fc.NUM_ACTIONS}")
+    fails += fail(fc.NUM_ACTIONS == 286, f"NUM_ACTIONS = {fc.NUM_ACTIONS}")
     fails += fail(fc.NUM_PLAYERS == 4, f"NUM_PLAYERS = {fc.NUM_PLAYERS}")
     fails += fail(fc.action.ROLL_DICE == 180, f"ROLL_DICE = {fc.action.ROLL_DICE}")
     fails += fail(fc.action.END_TURN == 181, f"END_TURN = {fc.action.END_TURN}")

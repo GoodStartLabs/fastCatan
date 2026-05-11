@@ -484,10 +484,9 @@ namespace catan::topology {
         {{ 0x41, 0x46, 0xFF, 0xFF }},
     }};
 
-    // Two Patterns for Port Placement. Node pairs derived from edge IDs:
-    //   A: 0x00 0x03 0x11 0x26 0x3D 0x45 0x42 0x31 0x12
-    //   B: 0x02 0x05 0x16 0x35 0x47 0x44 0x36 0x21 0x0A
-    inline constexpr std::array<std::array<uint8_t, 2>, NUM_PORTS> port_to_node_A = {{
+    // Port placement. Node pairs derived from edge IDs:
+    //   0x00 0x03 0x11 0x26 0x3D 0x45 0x42 0x31 0x12
+    inline constexpr std::array<std::array<uint8_t, 2>, NUM_PORTS> port_to_node = {{
         {{ 0x00, 0x01 }},   // edge 0x00
         {{ 0x03, 0x04 }},   // edge 0x03
         {{ 0x0E, 0x0F }},   // edge 0x11
@@ -498,38 +497,5 @@ namespace catan::topology {
         {{ 0x1C, 0x26 }},   // edge 0x31
         {{ 0x07, 0x11 }},   // edge 0x12
     }};
-
-    inline constexpr std::array<std::array<uint8_t, 2>, NUM_PORTS> port_to_node_B = {{
-        {{ 0x02, 0x03 }},   // edge 0x02
-        {{ 0x05, 0x06 }},   // edge 0x05
-        {{ 0x0F, 0x19 }},   // edge 0x16
-        {{ 0x24, 0x2E }},   // edge 0x35
-        {{ 0x34, 0x35 }},   // edge 0x47
-        {{ 0x31, 0x32 }},   // edge 0x44
-        {{ 0x26, 0x27 }},   // edge 0x36
-        {{ 0x10, 0x1B }},   // edge 0x21
-        {{ 0x07, 0x08 }},   // edge 0x0A
-    }};
-
-    // Reverse lookups: node -> port slot (or NO_PORT) per pattern.
-    inline constexpr std::array<uint8_t, 54> node_to_port_A = []{
-        std::array<uint8_t, 54> a{};
-        for (auto& v : a) v = NO_PORT;
-        for (uint8_t p = 0; p < 9; ++p) {
-            a[port_to_node_A[p][0]] = p;
-            a[port_to_node_A[p][1]] = p;
-        }
-        return a;
-    }();
-
-    inline constexpr std::array<uint8_t, 54> node_to_port_B = []{
-        std::array<uint8_t, 54> a{};
-        for (auto& v : a) v = NO_PORT;
-        for (uint8_t p = 0; p < 9; ++p) {
-            a[port_to_node_B[p][0]] = p;
-            a[port_to_node_B[p][1]] = p;
-        }
-        return a;
-    }();
 
 }  // namespace catan::topology

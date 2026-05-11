@@ -15,9 +15,19 @@ namespace catan {
     // [187,206) MOVE_ROBBER by hex
     // [206,210) STEAL by player
     // [210,235) TRADE (give*5 + get)
-    // 235      BUY_DEV
-    // 236      PLAY_KNIGHT
-    inline constexpr uint32_t NUM_ACTIONS = 296;
+    // 235 Buy Dev
+    // 236 Play Knight
+    // 237 Play Roadbuilding
+    // 238 YOP (25 combinations)
+    // 263 Monopoly
+    // 268 Add to Trade Give
+    // 273 Add to Trade Want
+    // 278 Trade Open
+    // 279 Accept
+    // 280 Decline
+    // 281 Confirm
+    // 285 Cancel
+    inline constexpr uint32_t NUM_ACTIONS = 286;
 
     // 5 × uint64 = 320 bits. Bit i corresponds to action ID i.
     inline constexpr uint32_t MASK_WORDS = 5;

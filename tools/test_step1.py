@@ -108,7 +108,6 @@ edge_byte = _bind("fcatan_edge", U8, VP, I)
 hex_resource = _bind("fcatan_hex_resource", U8, VP, I)
 hex_number   = _bind("fcatan_hex_number",   U8, VP, I)
 port_type    = _bind("fcatan_port_type",    U8, VP, I)
-port_layout  = _bind("fcatan_port_layout",  U8, VP)
 
 p_vp        = _bind("fcatan_player_vp",            U8, VP, I)
 p_vp_pub    = _bind("fcatan_player_vp_public",     U8, VP, I)

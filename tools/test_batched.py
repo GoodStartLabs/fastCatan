@@ -23,7 +23,7 @@ def _b(name, restype, *argtypes):
 
 obs_size = _b("fcatan_obs_size", U32)
 MASK_WORDS = 5
-NUM_ACTIONS = 296
+NUM_ACTIONS = 286
 
 bcreate  = _b("fbatched_create",  VP, U32, U64)
 bdestroy = _b("fbatched_destroy", None, VP)

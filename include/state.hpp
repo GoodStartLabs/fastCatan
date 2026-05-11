@@ -53,7 +53,6 @@ namespace catan {
         uint8_t hex_resource[19]; // 0=brick 1=lumber 2=wool 3=grain 4=ore 5=desert
         uint8_t hex_number[19];   // 0 for desert; else 2..12 skipping 7
         uint8_t port_type[9];     // 0..4 = 2:1 specific resource, 5 = 3:1 generic
-        uint8_t port_layout;      // 0 = pattern A, 1 = pattern B; selects topology::port_to_node_{A,B}
     };
 
     // ---------------------------------------------------------------------

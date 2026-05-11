@@ -7,11 +7,7 @@ namespace catan {
     // Initialize one episode. Randomizes BoardLayout
     void reset_one(GameState& s, BoardLayout& b, uint64_t seed) noexcept;
 
-    // Refresh the GameState::action_mask field by full recompute
-    void refresh_mask(GameState& s, const BoardLayout& b) noexcept;
-
-    // Advance one env by one action. Caller is responsible for
-    // passing only mask-legal actions in production
+    // Advance one env by one action. Caller is responsible for passing only mask-legal actions in production
     void step_one(GameState& s, const BoardLayout& b,
                   uint32_t action, float& reward, uint8_t& done) noexcept;
 

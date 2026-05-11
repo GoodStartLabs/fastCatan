@@ -16,14 +16,12 @@ PLAY_YEAR_OF_PLENTY = 238
 PLAY_MONOPOLY = 263
 
 TRADE_ADD_GIVE_BASE    = 268
-TRADE_REMOVE_GIVE_BASE = 273
-TRADE_ADD_WANT_BASE    = 278
-TRADE_REMOVE_WANT_BASE = 283
-TRADE_OPEN             = 288
-TRADE_ACCEPT           = 289
-TRADE_DECLINE          = 290
-TRADE_CONFIRM_BASE     = 291
-TRADE_CANCEL           = 295
+TRADE_ADD_WANT_BASE    = 273
+TRADE_OPEN             = 278
+TRADE_ACCEPT           = 279
+TRADE_DECLINE          = 280
+TRADE_CONFIRM_BASE     = 281
+TRADE_CANCEL           = 285
 
 NUM_NODES, NUM_EDGES, NUM_PLAYERS = 54, 72, 4
 NO_PLAYER = 0xFF
@@ -148,7 +146,7 @@ def fail(cond, msg):
 # Tests
 # ---------------------------------------------------------------------
 
-def test_compose_add_remove():
+def test_compose_add():
     e = Env(); to_post_roll_no7(e)
     pl = current_player(e.h)
     give_res(e.h, pl, R_BRICK, 3)
@@ -161,12 +159,6 @@ def test_compose_add_remove():
 
     e.step(TRADE_ADD_WANT_BASE + R_GRAIN)
     fails += fail(trade_want(e.h, R_GRAIN) == 1, f"add want: {trade_want(e.h, R_GRAIN)}")
-
-    e.step(TRADE_REMOVE_GIVE_BASE + R_BRICK)
-    fails += fail(trade_give(e.h, R_BRICK) == 1, f"remove give: {trade_give(e.h, R_BRICK)}")
-
-    e.step(TRADE_REMOVE_WANT_BASE + R_GRAIN)
-    fails += fail(trade_want(e.h, R_GRAIN) == 0, f"remove want: {trade_want(e.h, R_GRAIN)}")
 
     return fails
 
@@ -271,6 +263,8 @@ def test_proposer_picks_among_multiple_acceptors():
     o1, o2 = (pl + 1) & 3, (pl + 2) & 3
     give_res(e.h, o1, R_GRAIN, 1)
     give_res(e.h, o2, R_GRAIN, 1)
+    o1_brick_pre = p_res(e.h, o1, R_BRICK)
+    o2_brick_pre = p_res(e.h, o2, R_BRICK)
 
     e.step(TRADE_ADD_GIVE_BASE + R_BRICK)
     e.step(TRADE_ADD_WANT_BASE + R_GRAIN)
@@ -293,8 +287,8 @@ def test_proposer_picks_among_multiple_acceptors():
     # Confirm with o2
     e.step(TRADE_CONFIRM_BASE + o2)
     fails += fail(flag(e.h) == FLAG_NONE, "flag not cleared")
-    fails += fail(p_res(e.h, o2, R_BRICK) == 1, "o2 didn't get brick")
-    fails += fail(p_res(e.h, o1, R_BRICK) == 0, "o1 incorrectly got brick (should be untouched)")
+    fails += fail(p_res(e.h, o2, R_BRICK) == o2_brick_pre + 1, "o2 didn't get brick")
+    fails += fail(p_res(e.h, o1, R_BRICK) == o1_brick_pre, "o1 incorrectly got brick (should be untouched)")
     return fails
 
 
@@ -415,7 +409,7 @@ def test_end_turn_clears_uncommitted_scratch():
 
 def main():
     total = 0
-    print("== test_compose_add_remove ==");                  total += test_compose_add_remove()
+    print("== test_compose_add ==");                         total += test_compose_add()
     print("== test_compose_cant_give_more_than_owned ==");   total += test_compose_cant_give_more_than_owned()
     print("== test_open_validation ==");                     total += test_open_validation()
     print("== test_full_trade_accept_and_confirm ==");       total += test_full_trade_accept_and_confirm()

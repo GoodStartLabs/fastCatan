@@ -82,7 +82,7 @@ Also defines:
 ### `include/topology.hpp`
 Compile-time-constant adjacency tables for the standard 19-hex Catan
 board: `hex_to_node`, `node_to_node`, `edge_to_node`, etc., plus port
-node placements (`port_to_node_A`, `port_to_node_B`). 11 tables in all,
+node placements (`port_to_node`, `node_to_port`). 10 tables in all,
 all `inline constexpr`. The board is fixed; only the resource/number
 randomization changes per episode.
 
@@ -101,7 +101,7 @@ void step_one(GameState&, const BoardLayout&, uint32_t action,
 void refresh_mask(GameState&, const BoardLayout&);
 ```
 
-Plus the action-ID layout in `namespace catan::action`: 296 flat IDs
+Plus the action-ID layout in `namespace catan::action`: 285 flat IDs
 for builds, dice, sub-phase actions, trades, dev-card plays, and the
 PvP-trade compose protocol.
 
@@ -109,7 +109,7 @@ PvP-trade compose protocol.
 Declares `compute_mask(state, board, mask_out)` — full recompute for
 debugging / cross-checking. The "live" mask is maintained inside
 `GameState::action_mask` (see incremental updates in `rules.cpp`).
-Constants `MASK_WORDS = 5` and `NUM_ACTIONS = 296`.
+Constants `MASK_WORDS = 5` and `NUM_ACTIONS = 286`.
 
 ### `include/obs.hpp`
 Declares `write_obs(state, board, pov, out)` — encodes a 724-element
