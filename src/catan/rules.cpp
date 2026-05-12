@@ -8,12 +8,10 @@
 
 namespace catan {
 
-// Forward decls — definitions live at the bottom of the file, after the sub-phase helpers they depend on. refresh_action_mask does a full
-// recompute using recompute_full; refresh_compose_mask_bits is a update covering only the trade-compose bit range [268, 286), used after ADD GIVE/WANT.
-namespace {
-    inline void refresh_action_mask(GameState& s, const BoardLayout& b) noexcept;
-    inline void refresh_compose_mask_bits(GameState& s, const BoardLayout& b) noexcept;
-}
+// Forward decl — definition lives at the bottom of the file, after the sub-phase helpers it depends on.
+static inline void recompute_full(const GameState& s,
+                                   const BoardLayout& b,
+                                   uint64_t mask[MASK_WORDS]) noexcept;
 namespace {
 // 19 hex tiles: 3 brick, 4 lumber, 4 wool, 4 grain, 3 ore, 1 desert.
 // Resource codes match BoardLayout::hex_resource semantics in state.hpp.
@@ -154,7 +152,7 @@ void reset_one(GameState& s, BoardLayout& b, uint64_t seed) noexcept {
     std::memcpy(s.dev_deck, INITIAL_DEV_DECK, sizeof(INITIAL_DEV_DECK));
 
     // Initialize incremental action_mask field.
-    refresh_action_mask(s, b);
+    recompute_full(s, b, s.action_mask);
 }
 
 // =====================================================================
@@ -167,6 +165,7 @@ namespace {
 // road. Derive sub-step from settlement_count (no extra state needed):
 //   _1: count==5 -> settlement; count==4 -> road
 //   _2: count==4 -> settlement; count==3 -> road
+// True is Settlement next and False is Road next.
 inline bool need_settlement(const GameState& s) noexcept {
     uint8_t cnt = s.player_settlement_count[s.current_player];
     return (s.phase == Phase::INITIAL_PLACEMENT_1) ? (cnt == 5) : (cnt == 4);
@@ -191,7 +190,7 @@ inline bool any_player_road_at(const GameState& s, uint8_t node_id, uint8_t play
     }
     return false;
 }
-
+//HERE
 // In _2, the just-placed (second) settlement is the only player-owned
 // settlement that has no incident player road yet.
 inline uint8_t find_unroaded_settlement(const GameState& s, uint8_t player) noexcept {
@@ -1285,24 +1284,7 @@ void step_one(GameState& s, const BoardLayout& b, uint32_t action,
         }
     }
 
-    // Refresh the incremental action_mask field. Surgical fast path for
-    // trade ADD compose actions when state is actually in compose phase;
-    // full recompute otherwise (incl. no-op illegal-action calls).
-    if (action >= action::TRADE_ADD_GIVE_BASE && action < action::TRADE_OPEN
-        && s.phase == Phase::MAIN && s.flag == Flag::NONE && s.dice_roll != 0) {
-        refresh_compose_mask_bits(s, b);
-    } else {
-        refresh_action_mask(s, b);
-    }
-#ifndef NDEBUG
-    {
-        uint64_t expected[5];
-        compute_mask(s, b, expected);
-        for (uint32_t _i = 0; _i < 5; ++_i) {
-            assert(s.action_mask[_i] == expected[_i] && "incremental mask drift");
-        }
-    }
-#endif
+    recompute_full(s, b, s.action_mask);
 }
 
 }  // namespace catan
@@ -1315,8 +1297,7 @@ void step_one(GameState& s, const BoardLayout& b, uint32_t action,
 namespace catan {
 
 // Internal full-recompute body. Writes into the provided 5-word buffer.
-// Used by both the incremental-mask field updater (refresh_action_mask)
-// and the public compute_mask wrapper.
+// Used by reset_one, step_one, and the public compute_mask wrapper.
 static inline void recompute_full(const GameState& s,
                                    [[maybe_unused]] const BoardLayout& b,
                                    uint64_t mask[MASK_WORDS]) noexcept {
@@ -1522,59 +1503,5 @@ void compute_mask(const GameState& s, const BoardLayout& b,
                   uint64_t mask[MASK_WORDS]) noexcept {
     recompute_full(s, b, mask);
 }
-
-// Definition for the top-of-file forward decl. Called by reset_one /
-// step_one after any state mutation to keep s.action_mask current.
-namespace {
-inline void refresh_action_mask(GameState& s, const BoardLayout& b) noexcept {
-    recompute_full(s, b, s.action_mask);
-}
-
-// Surgical updater for trade-compose actions. Only the compose bit range
-// [268, 286) can be affected because ADD GIVE/WANT mutate only
-// trade scratch — not flag, dice_roll, phase, resources, or bank.
-inline void refresh_compose_mask_bits(GameState& s, const BoardLayout& b) noexcept {
-    // Compose bits all sit in word 4: bit 268 = position 12, bit 285 = position 29.
-    // Range is positions 12..29 inclusive (18 bits).
-    constexpr uint64_t COMPOSE_BIT_RANGE = ((uint64_t(1) << 18) - 1) << 12;
-    s.action_mask[4] &= ~COMPOSE_BIT_RANGE;
-
-    // Compose bits are only legal when MAIN, post-roll, no flag.
-    if (s.phase != Phase::MAIN || s.flag != Flag::NONE || s.dice_roll == 0) {
-        (void)b;
-        return;
-    }
-
-    auto set_bit = [&](uint32_t a) noexcept {
-        s.action_mask[a >> 6] |= (uint64_t(1) << (a & 63));
-    };
-
-    uint8_t pl = s.current_player;
-    for (uint8_t r = 0; r < 5; ++r) {
-        if (s.player_resources[pl][r] > s.trade_give[r])
-            set_bit(action::TRADE_ADD_GIVE_BASE + r);
-        if (s.trade_want[r] < 19)
-            set_bit(action::TRADE_ADD_WANT_BASE + r);
-    }
-    // TRADE_OPEN: scratch valid AND proposer holds the give bundle.
-    bool give_any = false, want_any = false;
-    for (uint8_t r = 0; r < 5; ++r) {
-        if (s.trade_give[r] > 0) give_any = true;
-        if (s.trade_want[r] > 0) want_any = true;
-    }
-    if (give_any && want_any) {
-        bool ok = true;
-        for (uint8_t r = 0; r < 5; ++r) {
-            if (s.player_resources[pl][r] < s.trade_give[r]) { ok = false; break; }
-        }
-        if (ok) set_bit(action::TRADE_OPEN);
-    }
-    // TRADE_CANCEL: scratch nonempty.
-    if (give_any || want_any) {
-        set_bit(action::TRADE_CANCEL);
-    }
-    (void)b;
-}
-}  // namespace
 
 }  // namespace catan

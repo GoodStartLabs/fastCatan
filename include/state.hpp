@@ -14,9 +14,9 @@ namespace catan {
     inline constexpr uint8_t NODE_CITY       = 2;
 
     inline constexpr uint8_t node_level(uint8_t n) noexcept { return n & 0x03; }
-    inline constexpr uint8_t node_owner(uint8_t n) noexcept { return (n >> 2) & 0x07; }
+    inline constexpr uint8_t node_owner(uint8_t n) noexcept { return (n >> 2) & 0x03; }
     inline constexpr uint8_t node_pack(uint8_t lvl, uint8_t owner) noexcept {
-        return uint8_t((lvl & 0x03) | ((owner & 0x07) << 2));
+        return uint8_t((lvl & 0x03) | ((owner & 0x03) << 2));
     }
 
     // ---------------------------------------------------------------------
