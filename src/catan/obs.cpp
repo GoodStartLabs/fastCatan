@@ -14,9 +14,6 @@ namespace catan {
 
 namespace {
 
-constexpr uint32_t NUM_RESOURCES = 5;
-constexpr uint32_t NUM_PLAYERS   = 4;
-
 inline uint8_t relseat(uint8_t self, uint8_t player) noexcept {
     return uint8_t((player + NUM_PLAYERS - self) & 0x3);
 }

@@ -182,6 +182,7 @@ inline bool can_settle_initial(const GameState& s, uint8_t node_id) noexcept {
     return true;
 }
 
+// True if player has a road at node_id, which is required for both initial settlement and road placement.
 inline bool any_player_road_at(const GameState& s, uint8_t node_id, uint8_t player) noexcept {
     for (uint8_t k = 0; k < topology::MAX_EDGES_PER_NODE; ++k) {
         uint8_t e = topology::node_to_edge[node_id][k];
@@ -190,7 +191,7 @@ inline bool any_player_road_at(const GameState& s, uint8_t node_id, uint8_t play
     }
     return false;
 }
-//HERE
+
 // In _2, the just-placed (second) settlement is the only player-owned
 // settlement that has no incident player road yet.
 inline uint8_t find_unroaded_settlement(const GameState& s, uint8_t player) noexcept {
@@ -203,6 +204,7 @@ inline uint8_t find_unroaded_settlement(const GameState& s, uint8_t player) noex
     return topology::NO_NODE;
 }
 
+// Road placement in initial placement has a different legality rule than in MAIN phase: it must connect to the just-placed settlement
 inline bool can_road_initial(const GameState& s, uint8_t edge_id, uint8_t player) noexcept {
     if (s.edge[edge_id] != NO_PLAYER) return false;
     uint8_t n0 = topology::edge_to_node[edge_id][0];
@@ -222,6 +224,7 @@ inline bool can_road_initial(const GameState& s, uint8_t edge_id, uint8_t player
     return n0 == target || n1 == target;
 }
 
+// If node_id is on a port, grant that port's trade ability to player. Called on settlement placement since only settlements (not cities) can claim ports.
 inline void grant_port(GameState& s, const BoardLayout& b,
                         uint8_t node_id, uint8_t player) noexcept {
     for (uint8_t p = 0; p < topology::NUM_PORTS; ++p) {
@@ -248,6 +251,7 @@ inline void payout_second_placement(GameState& s, const BoardLayout& b,
     }
 }
 
+// Place settlement or road for initial placement. Caller must have validated legality of the action for the current sub-phase.
 inline void place_settlement(GameState& s, const BoardLayout& b,
                               uint8_t node_id, uint8_t player, bool payout) noexcept {
     s.node[node_id] = node_pack(NODE_SETTLEMENT, player);
@@ -286,10 +290,13 @@ inline void advance_initial_turn(GameState& s) noexcept {
     }
 }
 
-inline void handle_initial_placement(GameState& s, const BoardLayout& b,
-                                      uint32_t action) noexcept {
+// Handle initial placement action. Caller must have validated that action is in the initial-placement slice of the action space
+// this function checks legality within that slice and ignores illegal actions.
+inline void handle_initial_placement(GameState& s, const BoardLayout& b, uint32_t action) noexcept {
+    
     if (need_settlement(s)) {
         if (action >= action::SETTLE_BASE + topology::NUM_NODES) return;
+
         uint8_t node_id = uint8_t(action - action::SETTLE_BASE);
         if (!can_settle_initial(s, node_id)) return;
         place_settlement(s, b, node_id, s.current_player,
@@ -311,10 +318,6 @@ inline void handle_initial_placement(GameState& s, const BoardLayout& b,
 // =====================================================================
 
 namespace {
-
-constexpr uint8_t NUM_RESOURCES = 5;
-constexpr uint8_t NUM_PLAYERS = 4;
-constexpr uint8_t WIN_VP = 10;
 
 // Forward decls — defined later in this anon namespace.
 inline void check_game_ended(GameState& s) noexcept;
@@ -356,7 +359,7 @@ inline bool road_connects(const GameState& s, uint8_t edge_id, uint8_t player) n
         // Own settlement/city at v -> connects.
         if (lvl != NODE_EMPTY && node_owner(n) == player) return true;
 
-        // Otherwise: a player road meeting at v (other than this edge).
+        // Otherwise (Node empty): a player road meeting at v (other than this edge).
         for (uint8_t k = 0; k < topology::MAX_EDGES_PER_NODE; ++k) {
             uint8_t e2 = topology::node_to_edge[v][k];
             if (e2 == topology::NO_EDGE) break;
@@ -446,8 +449,8 @@ inline void handle_roll_dice(GameState& s, const BoardLayout& b) noexcept {
             s.player_discard_remaining[p] = (hs > 7) ? uint8_t(hs / 2) : uint8_t(0);
             if (hs > 7) anyone_over = true;
         }
-
         if (anyone_over) {
+            s.flag = Flag::DISCARD_RESOURCES;
             // Pick first discarder, clockwise from turn owner.
             for (uint8_t i = 0; i < NUM_PLAYERS; ++i) {
                 uint8_t p = uint8_t((s.current_player + i) & 0x03);
@@ -456,7 +459,6 @@ inline void handle_roll_dice(GameState& s, const BoardLayout& b) noexcept {
                     break;
                 }
             }
-            s.flag = Flag::DISCARD_RESOURCES;
         } else {
             s.flag = Flag::MOVE_ROBBER;
         }
@@ -537,7 +539,6 @@ inline void handle_end_turn(GameState& s) noexcept {
     s.current_player  = uint8_t((s.current_player + 1) & 0x03);
     s.turn_count     += 1;
 
-    check_game_ended(s);
 }
 
 // =====================================================================

@@ -8,6 +8,11 @@ namespace catan {
     // player-id fields when no player owns the slot
     inline constexpr uint8_t NO_PLAYER = 0xFF;
 
+    // Game-wide constants.
+    inline constexpr uint8_t NUM_RESOURCES = 5;
+    inline constexpr uint8_t NUM_PLAYERS   = 4;
+    inline constexpr uint8_t WIN_VP        = 10;
+
     // node[] encoding: bits 0-1 = level, bits 2-4 = owner.
     inline constexpr uint8_t NODE_EMPTY      = 0;
     inline constexpr uint8_t NODE_SETTLEMENT = 1;
