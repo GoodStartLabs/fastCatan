@@ -840,7 +840,7 @@ inline void check_longest_road(GameState& s) noexcept {
     uint8_t threshold = (holder == NO_PLAYER) ? LONGEST_ROAD_THRESHOLD
                                               : uint8_t(holder_len + 1);
     uint8_t winner   = NO_PLAYER;
-    uint8_t winner_n = uint8_t(threshold - 1);
+    uint8_t winner_n = 5;  // must exceed 5 to claim if no current holder
     for (uint8_t p = 0; p < NUM_PLAYERS; ++p) {
         if (lens[p] >= threshold && lens[p] > winner_n) {
             winner   = p;
@@ -894,7 +894,7 @@ inline void handle_place_road(GameState& s, uint32_t action) noexcept {
     s.free_roads_remaining  -= 1;
     check_longest_road(s);
 
-    if (s.free_roads_remaining == 0 || !has_any_legal_road(s, pl)) {
+    if (s.free_roads_remaining == 0 || !has_any_legal_road(s, pl) || s.player_road_count[pl] == 0) {
         s.free_roads_remaining = 0;
         s.flag                 = Flag::NONE;
     }
@@ -1000,6 +1000,8 @@ inline void clear_trade_scratch(GameState& s) noexcept {
 
 // Compose helpers — only valid post-roll with no active flag.
 inline void handle_trade_add_give(GameState& s, uint32_t action) noexcept {
+    if (s.flag != Flag::NONE) return;
+    if (s.dice_roll == 0) return;
     uint32_t r = action - action::TRADE_ADD_GIVE_BASE;
     if (r >= NUM_RESOURCES) return;
     uint8_t pl = s.current_player;
@@ -1007,6 +1009,8 @@ inline void handle_trade_add_give(GameState& s, uint32_t action) noexcept {
     s.trade_give[r] += 1;
 }
 inline void handle_trade_add_want(GameState& s, uint32_t action) noexcept {
+    if (s.flag != Flag::NONE) return;
+    if (s.dice_roll == 0) return;
     uint32_t r = action - action::TRADE_ADD_WANT_BASE;
     if (r >= NUM_RESOURCES) return;
     if (s.trade_want[r] >= 19) return;  // cap to bank max
