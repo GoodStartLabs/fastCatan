@@ -7,7 +7,6 @@
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/array.h>
 #include <cstring>
-#include <new>
 
 #include "rules.hpp"
 #include "mask.hpp"

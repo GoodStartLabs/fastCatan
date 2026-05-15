@@ -22,7 +22,7 @@ def fail(cond, msg):
 
 def test_module_constants():
     fails = 0
-    fails += fail(fc.OBS_SIZE == 724, f"OBS_SIZE = {fc.OBS_SIZE}")
+    fails += fail(fc.OBS_SIZE == 1084, f"OBS_SIZE = {fc.OBS_SIZE}")
     fails += fail(fc.MASK_WORDS == 5, f"MASK_WORDS = {fc.MASK_WORDS}")
     fails += fail(fc.NUM_ACTIONS == 286, f"NUM_ACTIONS = {fc.NUM_ACTIONS}")
     fails += fail(fc.NUM_PLAYERS == 4, f"NUM_PLAYERS = {fc.NUM_PLAYERS}")

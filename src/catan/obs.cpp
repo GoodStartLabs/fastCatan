@@ -9,6 +9,7 @@
 //   Trade scratch (proposer, give, want, responses)
 #include "obs.hpp"
 #include "topology.hpp"
+#include <cassert>
 
 namespace catan {
 
@@ -69,25 +70,37 @@ void write_obs(const GameState& s, const BoardLayout& b,
     for (uint8_t d = 0; d < 5; ++d)             w.put(float(s.player_dev_bought_this_turn[self][d]));
     w.put(float(s.dev_card_played ? 1 : 0));
 
-    // ----- Board: nodes (4 channels per node) -----
-    // [own_settle, own_city, opp_settle, opp_city]
+    // ----- Board: nodes (8 channels per node, in relseat order) -----
+    // [self_settle, self_city, opp+1_settle, opp+1_city,
+    //  opp+2_settle, opp+2_city, opp+3_settle, opp+3_city]
     for (uint8_t n = 0; n < topology::NUM_NODES; ++n) {
         uint8_t nb = s.node[n];
         uint8_t lvl = node_level(nb);
-        uint8_t own = node_owner(nb);
-        bool is_self_owned = (lvl != NODE_EMPTY) && (own == self);
-        bool is_opp_owned  = (lvl != NODE_EMPTY) && (own != self);
-        w.put((is_self_owned && lvl == NODE_SETTLEMENT) ? 1.0f : 0.0f);
-        w.put((is_self_owned && lvl == NODE_CITY)       ? 1.0f : 0.0f);
-        w.put((is_opp_owned  && lvl == NODE_SETTLEMENT) ? 1.0f : 0.0f);
-        w.put((is_opp_owned  && lvl == NODE_CITY)       ? 1.0f : 0.0f);
+        if (lvl == NODE_EMPTY) {
+            w.zero(2 * NUM_PLAYERS);
+            continue;
+        }
+        uint8_t rel = relseat(self, node_owner(nb));
+        bool is_settle = (lvl == NODE_SETTLEMENT);
+        bool is_city   = (lvl == NODE_CITY);
+        for (uint8_t r = 0; r < NUM_PLAYERS; ++r) {
+            w.put((r == rel && is_settle) ? 1.0f : 0.0f);
+            w.put((r == rel && is_city)   ? 1.0f : 0.0f);
+        }
     }
 
-    // ----- Board: edges (2 channels per edge) -----
+    // ----- Board: edges (4 channels per edge, in relseat order) -----
+    // [self_road, opp+1_road, opp+2_road, opp+3_road]
     for (uint8_t e = 0; e < topology::NUM_EDGES; ++e) {
         uint8_t owner = s.edge[e];
-        w.put(owner == self                          ? 1.0f : 0.0f);
-        w.put((owner != self && owner != NO_PLAYER)  ? 1.0f : 0.0f);
+        if (owner == NO_PLAYER) {
+            w.zero(NUM_PLAYERS);
+            continue;
+        }
+        uint8_t rel = relseat(self, owner);
+        for (uint8_t r = 0; r < NUM_PLAYERS; ++r) {
+            w.put(r == rel ? 1.0f : 0.0f);
+        }
     }
 
     // ----- Hex resource (one-hot 6 per hex) -----
@@ -145,6 +158,8 @@ void write_obs(const GameState& s, const BoardLayout& b,
         uint8_t v = uint8_t((s.trade_response >> (2 * pl)) & 0x3);
         w.onehot(int(v), 4);
     }
+
+    assert(w.p == out + OBS_SIZE);
 }
 
 }  // namespace catan

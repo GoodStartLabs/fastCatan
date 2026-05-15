@@ -16,12 +16,13 @@ namespace catan {
     inline constexpr uint32_t OBS_SELF_PRIVATE = 16;
 
     // Board (static+dynamic).
-    // node ownership 4ch × 54, edge ownership 2ch × 72,
+    // node ownership 8ch × 54 (per-player settle/city in relseat order),
+    // edge ownership 4ch × 72 (per-player road in relseat order),
     // hex_resource one-hot 6ch × 19, hex_number/12 × 19,
     // port_type one-hot 6ch × 9, robber one-hot × 19
     inline constexpr uint32_t OBS_BOARD =
-        4 * topology::NUM_NODES +
-        2 * topology::NUM_EDGES +
+        8 * topology::NUM_NODES +
+        4 * topology::NUM_EDGES +
         6 * topology::NUM_HEXES + topology::NUM_HEXES +
         6 * topology::NUM_PORTS +
         topology::NUM_HEXES;

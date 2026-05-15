@@ -6,7 +6,6 @@
 
 #include <cstdlib>
 #include <cstring>
-#include <new>
 
 namespace catan {
 

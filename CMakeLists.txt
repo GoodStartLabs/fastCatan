@@ -9,6 +9,8 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "" FORCE)
+
 # Tell CMake to enable LTO when building Release.
 include(CheckIPOSupported)
 check_ipo_supported(RESULT _IPO_SUPPORTED OUTPUT _IPO_LOG)
@@ -74,6 +76,35 @@ if(SKBUILD)
                   python/fastcatan/alphabeta.py
                   python/fastcatan/selfplay.py
             DESTINATION fastcatan)
+endif()
+
+# --------------------------------------------------------------------
+# IDE indexing target for bindings.cpp (clangd / VS Code).
+# Not built by default; gives compile_commands.json an entry so clangd
+# can resolve nanobind + Python headers. Skipped when configured via
+# scikit-build (the real Python module is built there).
+# --------------------------------------------------------------------
+if(NOT SKBUILD)
+    find_package(Python 3.10 COMPONENTS Interpreter Development.Module QUIET)
+    if(Python_FOUND)
+        execute_process(
+            COMMAND ${Python_EXECUTABLE} -c "import nanobind, sys; sys.stdout.write(nanobind.include_dir())"
+            OUTPUT_VARIABLE _NB_INCLUDE
+            RESULT_VARIABLE _NB_RC
+        )
+        if(_NB_RC EQUAL 0 AND EXISTS "${_NB_INCLUDE}")
+            add_library(bindings_ide OBJECT EXCLUDE_FROM_ALL
+                bindings/pycatan/bindings.cpp)
+            target_include_directories(bindings_ide PRIVATE
+                ${_NB_INCLUDE}
+                ${Python_INCLUDE_DIRS})
+            target_link_libraries(bindings_ide PRIVATE fastcatan_core)
+            target_compile_options(bindings_ide PRIVATE -O0)
+            message(STATUS "IDE indexing target enabled for bindings.cpp")
+        else()
+            message(STATUS "nanobind not found in active Python; bindings.cpp IDE target skipped")
+        endif()
+    endif()
 endif()
 
 # Throughput benchmarks.
