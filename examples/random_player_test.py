@@ -1,71 +1,47 @@
+"""4-player Catan test orchestrator. Players pluggable via --players flag."""
+
 import argparse
-import random
+import contextlib
 import time
 import numpy as np
 
 import fastcatan
+from player_base import build_p2p_trade_filter
+from random_player import RandomPlayer
+from alphabeta_player import AlphaBetaPlayer
 
 
-def legal_actions(mask: np.ndarray) -> list[int]:
-    """Return list of action IDs whose bit is set in the uint64 bitmask buffer."""
-    out: list[int] = []
-    for word_idx, word in enumerate(mask):
-        w = int(word)
-        base = word_idx * 64
-        while w:
-            bit = (w & -w).bit_length() - 1
-            out.append(base + bit)
-            w &= w - 1
-    return out
+PLAYER_REGISTRY = {
+    "random": RandomPlayer,
+    "alphabeta": AlphaBetaPlayer,
+}
 
+def make_players(spec: str, seed: int, forbid):
+    names = [n.strip() for n in spec.split(",")]
+    if len(names) == 1:
+        names = names * 4
+    if len(names) != 4:
+        raise ValueError(f"--players must be 1 or 4 names, got {len(names)}")
+    return [PLAYER_REGISTRY[n](seed=seed + seat * 1000, forbid=forbid)
+            for seat, n in enumerate(names)]
 
-def build_p2p_trade_filter() -> np.ndarray:
-    """Mask with bits SET for every player-to-player trade action ID.
-
-    Used as an AND-NOT filter to suppress p2p trading. Bank/port trades
-    (TRADE_BASE..TRADE_BASE+25) stay enabled.
-    """
-    a = fastcatan.action
-    ids = (
-        list(range(a.TRADE_ADD_GIVE_BASE, a.TRADE_ADD_GIVE_BASE + 5))
-        + list(range(a.TRADE_ADD_WANT_BASE, a.TRADE_ADD_WANT_BASE + 5))
-        + [a.TRADE_OPEN, a.TRADE_ACCEPT, a.TRADE_DECLINE]
-        + list(range(a.TRADE_CONFIRM_BASE, a.TRADE_CONFIRM_BASE + 4))
-        + [a.TRADE_CANCEL]
-    )
-    m = np.zeros(fastcatan.MASK_WORDS, dtype=np.uint64)
-    for aid in ids:
-        m[aid // 64] |= np.uint64(1) << np.uint64(aid % 64)
-    return m
-
-
-def pick_random(rng: random.Random, mask: np.ndarray, forbid: np.ndarray | None) -> int:
-    if forbid is not None:
-        mask = mask & ~forbid
-    legals = legal_actions(mask)
-    if not legals:
-        raise RuntimeError("no legal actions in mask")
-    return rng.choice(legals)
-
-
-def play_one(seed: int, max_steps: int, verbose: bool,
-             forbid: np.ndarray | None) -> tuple[int, list[int], int, int]:
+def play_one(game_id, seed, max_steps, players, log_f):
     env = fastcatan.Env()
     env.reset(seed)
-
     mask = np.zeros(fastcatan.MASK_WORDS, dtype=np.uint64)
-    rng = random.Random(seed)
 
     for step_idx in range(max_steps):
         env.action_mask(mask)
-        action = pick_random(rng, mask, forbid)
+        player_idx = env.current_player
+        phase = env.phase
+        turn = env.turn_count
+        action = players[player_idx].act(env, mask)
         reward, done = env.step(action)
 
-        if verbose and step_idx % 200 == 0:
-            print(
-                f"step={step_idx:5d} phase={env.phase} "
-                f"cur={env.current_player} action={action} "
-                f"vp={[env.player_vp(p) for p in range(4)]}"
+        if log_f:
+            log_f.write(
+                f"{game_id},{seed},{step_idx},{turn},{phase},{player_idx},"
+                f"{action},{reward:.0f},{int(done)}\n"
             )
 
         if done:
@@ -77,14 +53,13 @@ def play_one(seed: int, max_steps: int, verbose: bool,
     return -1, vps, max_steps, env.turn_count
 
 
-def main() -> None:
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--games", type=int, default=1)
-    parser.add_argument("--max-steps", type=int, default=20_000)
-    parser.add_argument("--verbose", action="store_true")
-    parser.add_argument("--no-player-trading", action="store_true",
-                        help="disable player-to-player trades (bank/port trades still allowed)")
+    parser.add_argument("--players", type=str, default="random",help="1 name (all seats) or 4 comma-sep names. " f"Choices: {list(PLAYER_REGISTRY)}")
+    parser.add_argument("--no-player-trading", action="store_true", help="disable player-to-player trades (bank/port trades stay allowed)")
+    parser.add_argument("--log", type=str, default="random_test.csv", help="CSV log path (pass empty string to disable)")
     args = parser.parse_args()
 
     forbid = build_p2p_trade_filter() if args.no_player_trading else None
@@ -96,25 +71,34 @@ def main() -> None:
     winner_vp_sum = 0
     loser_vp_sum = 0
     loser_n = 0
+    max_steps = 100_000  # safety cap to prevent infinite games from hanging the test
 
-    t0 = time.perf_counter()
-    for g in range(args.games):
-        winner, vps, steps, turns = play_one(args.seed + g, args.max_steps, args.verbose, forbid)
-        total_steps += steps
-        total_turns += turns
-        if winner < 0:
-            no_winner += 1
-        else:
-            win_counts[winner] += 1
-            winner_vp_sum += vps[winner]
-            for p, v in enumerate(vps):
-                if p != winner:
-                    loser_vp_sum += v
-                    loser_n += 1
-    elapsed = time.perf_counter() - t0
+    log_cm = open(args.log, "w") if args.log else contextlib.nullcontext()
+    with log_cm as log_f:
+        if log_f:
+            log_f.write("game,seed,step,turn,phase,player,action,reward,done\n")
+
+        t0 = time.perf_counter()
+        for g in range(args.games):
+            seed = args.seed + g
+            players = make_players(args.players, seed, forbid)
+            winner, vps, steps, turns = play_one(g, seed, max_steps, players, log_f)
+            total_steps += steps
+            total_turns += turns
+            if winner < 0:
+                no_winner += 1
+            else:
+                win_counts[winner] += 1
+                winner_vp_sum += vps[winner]
+                for p, v in enumerate(vps):
+                    if p != winner:
+                        loser_vp_sum += v
+                        loser_n += 1
+        elapsed = time.perf_counter() - t0
 
     n = args.games
     winners_n = n - no_winner
+    print(f"players:         {args.players}")
     print(f"games:           {n}  (no-winner: {no_winner})")
     print(f"wins per seat:   {win_counts}")
     print(f"avg steps/game:  {total_steps / n:.1f}")
