@@ -178,17 +178,17 @@ TODO
 - Gymnasium 4-player env (single-agent wrapper) + PettingZoo AEC.
 - Incremental legal-action mask (296 used / 320 bits); surgical trade updater.
 
-### M1 — Baselines
+### M1 — Correctness, Baselines, Bridge
 
-- Random baseline (Python).
-- Alpha-Beta baseline (Python): depth-limited minimax + multi-feature heuristic.
-- Game-log capture for both Python baselines (action stream, board state, seed).
-- Random baseline (C++).
-- Alpha-Beta baseline (C++).
-- Parity test: C++ vs Python baselines on shared seed-replay corpus (state/action equivalence + steps/sec comparison).
-- Parity test: C++ baseline vs Catanatron on shared seed-replay corpus (rule equivalence). Important. Catan rules are notoriously subtle; even a single mis-implemented corner case can silently break the agent's learning.
-- Throughput + log dashboard: steps/sec, episode length distribution, win rates per seat.
-- **Gate: C++ baselines match Python and Catanatron on log replay (zero divergence) and beat Python throughput by ≥100×.**
+Goal: validate the C++ sim plays Catan correctly before any RL touches it. Self-play means only the learned policy needs to be fast — baselines stay in Python.
+
+- [x] Random baseline (Python).
+- [x] Alpha-Beta baseline (Python): depth-limited minimax + multi-feature heuristic.
+- [x] Log capture: random baseline games (action stream, board state, seed).
+- [x] Log capture: Alpha-Beta baseline games.
+- [ ] Throughput + log dashboard: steps/sec headline + per-component µs breakdown (`step_one`, mask update, `write_obs`, RNG, nanobind dispatch); episode length distribution; win rates per seat; baseline-vs-baseline outcomes. Names the bottleneck before M2 training begins.
+- [ ] Correctness check: rule equivalence vs Catanatron on shared seed-replay corpus (action-by-action, same board, same dice); invariant fuzz green at 10⁷ random games. Catan rules are subtle — one mis-implemented corner case silently corrupts learning.
+- **Gate: zero rule divergence vs Catanatron on replay corpus; per-component bottleneck named with measured µs in dashboard.**
 
 ### M2 — Initial RL Agent
 

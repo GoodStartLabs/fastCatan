@@ -39,10 +39,7 @@ def play_one(game_id, seed, max_steps, players, log_f):
         reward, done = env.step(action)
 
         if log_f:
-            log_f.write(
-                f"{game_id},{seed},{step_idx},{turn},{phase},{player_idx},"
-                f"{action},{reward:.0f},{int(done)}\n"
-            )
+            log_f.write(f"{game_id},{seed},{step_idx},{turn},{phase},{player_idx},{action},{reward:.0f},{int(done)}\n")
 
         if done:
             vps = [env.player_vp(p) for p in range(4)]
