@@ -186,7 +186,7 @@ TODO
 - Random baseline (C++).
 - Alpha-Beta baseline (C++).
 - Parity test: C++ vs Python baselines on shared seed-replay corpus (state/action equivalence + steps/sec comparison).
-- Parity test: C++ baseline vs Catanatron on shared seed-replay corpus (rule equivalence).
+- Parity test: C++ baseline vs Catanatron on shared seed-replay corpus (rule equivalence). Important. Catan rules are notoriously subtle; even a single mis-implemented corner case can silently break the agent's learning.
 - Throughput + log dashboard: steps/sec, episode length distribution, win rates per seat.
 - **Gate: C++ baselines match Python and Catanatron on log replay (zero divergence) and beat Python throughput by ≥100×.**
 
@@ -199,7 +199,7 @@ TODO
 
 ### M3 — Self-Play Training
 
-- Iterative self-play schedule (frozen snapshot rotation cadence).
+- Iterative self-play schedule (frozen snapshot rotation).
 - Hyperparam sweep over learning rate, entropy, snapshot interval.
 - **Gate: latest model beats N-step-ago snapshot >55%.**
 
