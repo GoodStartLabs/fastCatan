@@ -164,9 +164,16 @@ def _start_player_seat(state) -> int:
     return 0
 
 
-def encode_obs(game: Game, pov_color: Color) -> np.ndarray:
+def encode_obs(game: Game, pov_color: Color,
+               compose_scratch: "tuple[list[int], list[int]] | None" = None) -> np.ndarray:
     """Encode catanatron Game state into a fastcatan-formatted obs vector
-    from `pov_color`'s perspective. Output: float32 array, len OBS_SIZE."""
+    from `pov_color`'s perspective. Output: float32 array, len OBS_SIZE.
+
+    `compose_scratch=(give_fast5, want_fast5)` overrides the trade scratch
+    section with a bridge-maintained scratch (used during the compose
+    sub-loop for OFFER_TRADE). When provided, the proposer slot is forced
+    to self (relseat 0) and per-opponent responses are N/A.
+    """
     state = game.state
     self_seat = _seat_of(state, pov_color)
 
@@ -306,17 +313,36 @@ def encode_obs(game: Game, pov_color: Color) -> np.ndarray:
 
     # --- Trade scratch (27) ---
     # Trade proposer (5)
+    if compose_scratch is not None:
+        give_fast, want_fast = compose_scratch
+        out.extend(_onehot(0, 5))  # proposer = self (relseat 0)
+        out.extend(float(x) for x in give_fast)
+        out.extend(float(x) for x in want_fast)
+        for _ in range(3):
+            out.extend(_onehot(3, 4))  # N/A for all opponents
+        arr = np.array(out, dtype=np.float32)
+        assert arr.shape == (fastcatan.OBS_SIZE,), \
+            f"obs size mismatch: got {arr.shape[0]}, expected {fastcatan.OBS_SIZE}"
+        return arr
+
     if state.is_resolving_trade and state.current_trade is not None:
         # current_trade: tuple(give[5_cat], want[5_cat], proposer_color)
         # Format may vary; conservatively skip.
         # Catanatron's current_trade structure documented as a tuple.
         # For now: parse defensively.
         ct = state.current_trade
-        proposer = None
+        proposer_seat = None
         if isinstance(ct, tuple) and len(ct) >= 11:
-            proposer = ct[10]
-        if proposer is not None:
-            out.extend(_onehot(_relseat(self_seat, state.color_to_index[proposer]), 5))
+            # current_trade = (*OFFER_TRADE.value, current_turn_index).
+            # The trailing element is the proposer's seat index (int).
+            v = ct[10]
+            if isinstance(v, int):
+                proposer_seat = v
+            else:
+                # Defensive: older builds may store the proposer Color here.
+                proposer_seat = state.color_to_index.get(v)
+        if proposer_seat is not None:
+            out.extend(_onehot(_relseat(self_seat, proposer_seat), 5))
         else:
             out.extend(_onehot(4, 5))
         # Give (5, fastcatan order)
