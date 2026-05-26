@@ -167,7 +167,50 @@ For trading-net training (M3 self-play+): a PettingZoo AEC wrapper yields contro
 
 ### Correctness
 
-TODO
+Enforced at three levels:
+
+1. **Internal invariants & scenarios** (`sim/tests/`, pytest): resource
+   conservation, mask legality, phase/flag transitions, determinism
+   (fixed-seed trajectory), terminal reward.
+
+2. **Cross-engine differential vs Catanatron** (the ground-truth oracle) —
+   the M1 gate. A true co-stepping harness drives BOTH engines through the
+   same action stream and asserts full state parity every ply. Pieces in
+   `bridge/` (see `bridge/PLAN.md`):
+   - `state_mirror.py` — byte-exact ctypes mirror of the 384-B C++
+     `GameState`+`BoardLayout` (validated vs live snapshots).
+   - `state_inject.py` — serialize any Catanatron state into fastcatan
+     (`load_snapshot`).
+   - `rng_force.py` — force fastcatan's xoshiro so dice / dev-draw / steal
+     reproduce Catanatron's outcome (verified against the C++ engine).
+   - `tests/test_differential.py` — co-stepping state parity.
+   - `tests/test_obs_identity.py` — C++ `write_obs` vs bridge `encode_obs`
+     bit-for-bit (obs layout + normalization parity).
+
+   This is stronger than `test_parity_replay.py` (which only checks the obs
+   encoder and never runs fastcatan's engine). It caught and fixed **5 real
+   sim bugs** (git log): longest-road title off-by-one (first player to reach
+   exactly 5 roads got no title +2 VP); production bank-shortage (all-or-
+   nothing per resource, no partial to a sole recipient — matches Catanatron
+   `yield_resources`); road buildability through an enemy-occupied component
+   node; history-dependent longest-road membership (`road_node_member` field
+   added to `GameState`); obs trade-response no-trade mismatch. Plus an
+   initial-placement phase mislabel in the bridge encoder.
+
+3. **Known parity bound — Catanatron's longest road is internally
+   inconsistent.** It caches lengths (recomputes only the "plowed" player on a
+   cut); its connected-component membership for enemy-boundary nodes is
+   history-dependent (`build_road` excludes them, `dfs_walk` on a cut re-adds
+   them); and it reassigns the title to the lowest seat index among tied
+   players on a cut. fastcatan is rule-correct (incumbent keeps the title on a
+   tie) and matches Catanatron on ~99% of positions; the residual (≤1–2% of
+   random games, road cuts only) is Catanatron's own inconsistency, exempted
+   in `test_differential`. Bit-parity there would need porting Catanatron's
+   component state machine — not worth it (fastcatan is the correct one).
+
+**Reproducibility** of the differential: pin `random.seed`, `np.random.seed`,
+AND `PYTHONHASHSEED` — Catanatron's `RandomPlayer` + set-iteration depend on
+all three; without `PYTHONHASHSEED` the corpus is not reproducible run-to-run.
 
 ## Milestones
 
@@ -188,6 +231,7 @@ Goal: validate the C++ sim plays Catan correctly before any RL touches it. Self-
 - [x] Log capture: Alpha-Beta baseline games.
 - [x] Catanatron bridge: topology map, action codec, obs encoder, run_eval. 251 bridge tests green (`bridge/tests/`).
 - [x] Replay parity tests: `bridge/tests/test_parity_replay.py` walks shared-seed games action-by-action against Catanatron.
+- [x] **Cross-engine differential** (`bridge/tests/test_differential.py` + `test_obs_identity.py`): co-steps fastcatan *and* Catanatron on identical action streams, asserts full state + obs parity every ply (via the `state_mirror`/`state_inject`/`rng_force` harness). Found and fixed **5 real sim bugs** (see Correctness). 25-seed corpus green; residual ≤1–2% is Catanatron's own longest-road inconsistency (documented, exempted).
 - [x] Throughput + bottleneck dashboard: `bench/bench_throughput.py` (Python-path breakdown) + `bench/bench_step.cpp` & `bench/bench_batched.cpp` (pure-C++ floor, standalone CMake targets). `bench_throughput.py` gives the single-env per-component µs breakdown, batched kernel scaling with nanobind-dispatch isolation, and fastcatan-vs-Catanatron on equal footing (games/s, turns/s; steps/s flagged non-comparable). `bench/bench_comprehensive.py` covers the distribution half (episode length percentiles, win rates per seat, VP). **Bottlenecks named:** single-env baseline is *Python-bound* — the legal-action bit-scan (`legal_actions`) is the largest kernel (~410 ns, ~36% of per-step) and total Python overhead (scan + interpreter glue + policy) is ~80%; the pure-C++ `step_one` is only ~47 ns (Release, `bench_step` replay) ≈ 4% of the per-step budget, with another ~76 ns of nanobind dispatch + return-tuple alloc on top in the bound path. Batched hot path is *obs-encode-bound* — `write_obs` (~80 ns/env, 1084 floats) dominates `step_one` (~40 ns/env) once dispatch amortizes (dispatch floor ~40 ns/call). Note: `step_one` fuses rules+mask-update+RNG and is not separable from Python; combined it is ~47 ns so not the bottleneck. Single-env 0.75M steps/s (Python) vs batched 24M steps/s = the ~32× amortization that justifies `BatchedEnv`; pure-C++ floors are ~21M (single-env `step_one`) and ~11M/core (`bench_batched 4096`, single-thread, near-linear with OpenMP on HPC). Equal footing vs Catanatron random4: ~7× games/s and ~7× turns/s.
 - [ ] 10⁷-game invariant fuzz run (scaffolding in `sim/tests/test_invariants.py`, needs scaled execution).
 - **Gate: zero rule divergence vs Catanatron on replay corpus; per-component bottleneck named with measured µs in dashboard.**
@@ -198,8 +242,9 @@ Goal: validate the C++ sim plays Catan correctly before any RL touches it. Self-
 - [x] MaskablePPO trainer (`models/train_ppo.py`) + checkpoint at `models/checkpoints/ppo_random/ppo_final.zip`.
 - [x] Reference trainers in separate files for thesis breadth: A2C, DQN, MuZero scaffold (`models/train_{a2c,dqn,muzero}.py`) + checkpoints.
 - [x] Eval harness `models/eval.py` (win rate + 95% Wilson CI vs random over N games).
-- [ ] Lock observation encoder + reward shaping (currently using native sim reward; obs/reward schema needs freeze before M3).
-- [ ] Gate run: ≥1000 games of PPO checkpoint vs random with win rate ≥0.90 recorded.
+- [x] Lock observation encoder + reward. **Obs frozen**: 1084 floats, count fields normalized by structural Catan maxima (divisors in `src/catan/obs.cpp` `namespace norm`, mirrored in `bridge/obs_encoder.py` + `ui/obs_decoder.py` — keep in sync; verified by `test_obs_identity`). **Reward frozen**: sparse ±1 terminal (+1 on the action reaching 10 VP, −1 if it lets an opponent win), no shaping; `models/env.py` treats a stalled game (`turn_count >= MAX_TURNS=1000`) and a no-winner terminal as a **loss** (−1). NOTE: changing obs/reward invalidates trained checkpoints — the old `models/checkpoints/*` were deleted after this freeze.
+- [ ] ⚠️ **Stall cap is ineffective as written.** `models/env.py` caps on `turn_count >= MAX_TURNS`, but `turn_count` only increments on END_TURN (`src/catan/rules.cpp:540`). The real degenerate stall is a *within-turn* `TRADE_OPEN`/`TRADE_CANCEL` loop (greedy/argmax policy never ends its turn), so `turn_count` freezes and the −1 cap never fires. Empirically, a trained greedy policy stalled ~85% of games to the step limit. **Fix: cap on a per-episode step counter (count `env.step` calls), and/or cap `TRADE_OPEN` re-opens per turn in the mask.** The −1 *values* are correct everywhere; only the trigger is broken.
+- [ ] Gate run: ≥1000 games of PPO checkpoint vs random with win rate ≥0.90 recorded. (Retrain on the frozen interface first — pre-freeze checkpoints are gone.) NOTE: eval with **sampling**, not `--deterministic` (argmax triggers the trade-loop stall above). A real 10M-step run (~8 min, DummyVecEnv ~21.6k fps) reached ~90% sampled win rate before the checkpoints were cleared.
 - **Gate: >90% win rate vs random baseline over 1000 four-player games.**
 
 ### M3 — Self-Play Training

@@ -1,0 +1,1 @@
+{"seed": 14, "ply": 1688, "action": "Action(color=C.ORANGE, action_type=AT.BUILD_SETTLEMENT, value=15)", "action_type": "BUILD_SETTLEMENT", "diffs": [["player_road_length[3]", 5, 6]], "n_diffs": 1}

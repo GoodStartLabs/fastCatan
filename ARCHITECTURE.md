@@ -4,6 +4,39 @@ A walking tour of every file in this repo, grouped by concern. New
 contributors should read this top-to-bottom; everyone else can skim to
 the section they need.
 
+> ## ⚠️ THIS DOC HAS DRIFTED — corrections for future agents (2026-05-27)
+>
+> Large parts below describe files/layout that are **not in the current tree**.
+> Trust this block on any conflict:
+>
+> - **Shapes:** `OBS_SIZE = 1084`, `NUM_ACTIONS = 286` (doc says 724 — wrong).
+> - **No `tools/` dir exists.** No `train_smoke.py`, `profile_train.py`,
+>   `c_api.cpp`, `build_*.sh`, or `tools/test_*.py`. Tests live in `sim/tests/`
+>   and `bridge/tests/`. Board viz is `visual/viz_topology.py`. Perft hashes are
+>   not currently checked in.
+> - **`python/fastcatan/` is just `__init__.py`** (re-exports the nanobind
+>   symbols: `Env`, `BatchedEnv`, `action`, shape constants). There is NO
+>   `gym_env.py`, `pettingzoo_env.py`, `tournament.py`, `alphabeta.py`, or
+>   `selfplay.py`. The single-agent Gym env is **`models/env.py`**
+>   (`FastCatanEnv`); the alpha-beta player is **`examples/alphabeta_player.py`**;
+>   the Catanatron bridge + eval live in **`bridge/`**.
+> - **No `fastcatan` shared lib / ctypes shim.** CMake builds `fastcatan_core`
+>   (static), `bench_step`, `bench_batched`, and `_fastcatan` (nanobind, gated on
+>   `SKBUILD`).
+> - **RL training** = `models/train_{ppo,a2c,dqn,muzero}.py` over `models/env.py`
+>   (single-env + SB3 `DummyVecEnv` by default), **not** a `BatchedEnv` VecEnv.
+>   See `models/PLAN.md`'s status block for PPO reality, the reward design, and
+>   the open stall-cap bug.
+> - The `bench/` section below **is** accurate (plus `bench_common.hpp`, and the
+>   Python `bench/bench_throughput.py` + `bench/bench_comprehensive.py`).
+> - **Correctness/eval lives in `bridge/`** (see `bridge/PLAN.md`): a true
+>   cross-engine differential vs Catanatron — `state_mirror` (byte-exact
+>   GameState ctypes mirror) + `state_inject` + `rng_force` +
+>   `tests/test_differential.py` + `tests/test_obs_identity.py`. It found and
+>   fixed 5 sim bugs. Obs **count fields are normalized** by structural maxima
+>   (`obs.cpp` `namespace norm`, mirrored in `bridge/obs_encoder.py` +
+>   `ui/obs_decoder.py`; `OBS_SIZE` stays 1084).
+
 ## Bird's-eye view
 
 ```
@@ -112,10 +145,11 @@ debugging / cross-checking. The "live" mask is maintained inside
 Constants `MASK_WORDS = 5` and `NUM_ACTIONS = 286`.
 
 ### `include/obs.hpp`
-Declares `write_obs(state, board, pov, out)` — encodes a 724-element
+Declares `write_obs(state, board, pov, out)` — encodes a 1084-element
 float32 observation from a chosen player's perspective (POV-flipped
 seat indexing, so the agent always sees its own slot at index 0).
-Constant `OBS_SIZE = 724`.
+Count fields are normalized by structural maxima (`namespace norm` in
+`obs.cpp`); one-hots/flags are 0/1. Constant `OBS_SIZE = 1084`.
 
 ### `include/batched_env.hpp`
 Declares `BatchedEnv` — N envs in one contiguous buffer for hot-path

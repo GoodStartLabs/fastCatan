@@ -198,7 +198,10 @@ def _per_opp_responses(state, self_seat: int) -> list[int]:
     not-yet-accepted; reject is recoverable from action_records.
     """
     if not state.is_resolving_trade:
-        return [3, 3, 3, 3]
+        # No active trade: fastcatan clears trade_response to 0, so write_obs
+        # encodes PENDING (slot 0) for every opponent. Match that here (NOT
+        # N/A) so the bridge obs is identical to the sim's (test_obs_identity).
+        return [0, 0, 0, 0]
     ct = state.current_trade
     if isinstance(ct, tuple) and len(ct) >= 11 and isinstance(ct[10], int):
         proposer_seat = ct[10]

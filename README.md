@@ -13,13 +13,21 @@ stepping with optional OpenMP, Gymnasium + PettingZoo wrappers.
 
 ## Throughput
 
-| Configuration | Steps/sec |
-|---|---|
-| Pure C++ batched (1024 envs, 1 thread) | ~13M |
-| Python (nanobind, step + mask) | ~19M |
-| HPC with OpenMP across 32 cores | projected ~150-300M |
+Measured with `bench/bench_throughput.py` (full per-component breakdown in
+PLAN.md M1). Single node:
 
-For comparison, M1 PLAN target was 5×10⁵; we're ~25× over.
+| Path | Steps/sec |
+|---|---|
+| Pure C++ batched `step_one` (1 thread) | ~10–50M (cache-bound; smaller batch faster) |
+| Python batched hot path (mask + policy + obs + step) | ~1M |
+| HPC, OpenMP across cores | near-linear (Linux/GCC; the macOS/clang build links no OpenMP) |
+
+Far above the M1 target (5×10⁵) and ~7× Catanatron on equal footing
+(games/s, random-vs-random). **The C++ `step_one` is not the bottleneck** — in
+the batched hot path `write_obs` (the 1084-float encode) dominates; in the
+single-env path the Python legal-action scan + interpreter glue dominate. So
+the optimization target, if ever needed, is the obs, not the simulator (for a
+GPU loop the cost shifts further to obs encode + CPU→GPU transfer).
 
 ## Quickstart
 
@@ -121,10 +129,11 @@ for agent in env.agent_iter():
 ### Training with MaskablePPO
 
 ```bash
-python3 tools/train_smoke.py --total-timesteps 10000 --device auto
+python3 -m models.train_ppo --num-envs 64 --total-steps 100_000
 ```
 
-See [`tools/train_smoke.py`](tools/train_smoke.py) for the full setup.
+See [`models/PLAN.md`](models/PLAN.md) for the trainers (PPO + A2C/DQN/MuZero
+references) and `models/env.py` for the single-agent Gym wrapper.
 
 ## Key concepts
 
@@ -175,6 +184,10 @@ for ~21% throughput win.
 
 `obs` is a `float32[OBS_SIZE=1084]` from the current player's perspective.
 Fields are POV-relative (self always at slot 0, opponents at +1, +2, +3).
+Count fields (VP, hand size, resources, road length, bank, …) are **normalized**
+by structural Catan maxima (see `src/catan/obs.cpp` `namespace norm`); one-hots
+and bit flags stay 0/1. The bridge eval encoder (`bridge/obs_encoder.py`)
+mirrors these divisors exactly — `bridge/tests/test_obs_identity.py` guards it.
 
 ### Reward
 
@@ -186,8 +199,8 @@ wrapper / training loop.
 ### RNG
 
 xoshiro128++ per env, 16 bytes of state, seeded via SplitMix64 from a
-master seed. Deterministic given the seed; perft hashes pinned in
-`tools/perft_hashes.json` are guarded by CI.
+master seed. Deterministic given the seed; fixed-seed reproducibility is
+guarded by `sim/tests/test_determinism.py`.
 
 ## Repo layout
 
@@ -196,8 +209,12 @@ include/                 public headers (state, rules, mask, obs, batched_env, r
 src/catan/               core C++ implementation
 bindings/pycatan/        nanobind module
 python/fastcatan/        Python package (re-exports + Gym/PettingZoo wrappers)
-tools/                   build scripts, tests, benchmarks, training smoke
-bench/                   pure-C++ throughput benchmarks
+sim/tests/               Python correctness tests (invariants, scenarios, determinism, mask)
+bridge/                  Catanatron interop + cross-engine differential (see bridge/PLAN.md)
+models/                  RL trainers (PPO + A2C/DQN/MuZero) + Gym env (see models/PLAN.md)
+ui/                      obs decoder / board render / replay (see ui/PLAN.md)
+examples/                random + alpha-beta player references
+bench/                   throughput benchmarks (bench_throughput.py + C++ bench_step/bench_batched)
 CMakeLists.txt           build system (HPC-ready)
 pyproject.toml           scikit-build-core editable install
 PLAN.md                  thesis plan + milestone tracking

@@ -19,7 +19,9 @@ All data comes from the existing engine surface — no new C++ needed.
   `largest_army_owner`).
 - `env.write_obs(pov, buf)` → float32[`OBS_SIZE`]. POV-relative encoding.
   Layout documented in `src/catan/obs.cpp` and mirrored in
-  `bridge/obs_encoder.py`.
+  `bridge/obs_encoder.py`. Count fields are **normalized** by structural Catan
+  maxima (`obs.cpp` `namespace norm`); `obs_decoder.py` de-normalizes them on
+  decode (its `N_*` divisors MUST match obs.cpp / obs_encoder.py).
 - `env.action_mask(buf)` → uint64[`MASK_WORDS`]. Bit `i` of word `w` = action
   `w*64 + i` legal.
 - `env.snapshot()` / `load_snapshot(bytes)` → exact state round-trip. Used by

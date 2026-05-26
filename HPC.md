@@ -84,32 +84,42 @@ Then verify GPU access:
 python3 -c "import torch; print(torch.cuda.is_available(), torch.cuda.device_count())"
 ```
 
-## 6. Run the smoke trainer
+## 6. Run the trainer
+
+Smoke (verify the stack end-to-end, ~5s):
 
 ```bash
-python3 tools/train_smoke.py --total-timesteps 10000 --device cuda --eval-episodes 50
+python3 -m models.train_ppo --num-envs 16 --total-steps 100000 --run-name smoke
 ```
 
-For a real training run, scale up:
+Real run (10M steps ≈ 8 min; SB3 auto-detects CUDA for the policy net):
 
 ```bash
-python3 tools/train_smoke.py \
-    --total-timesteps 1000000 \
-    --device cuda \
-    --eval-episodes 200 \
-    --save checkpoints/ppo_random_v0.zip
+python3 -m models.train_ppo --num-envs 16 --total-steps 10000000 --run-name ppo_random
 ```
+
+Then eval (use **sampling**, not `--deterministic` — argmax triggers a trade-loop stall):
+
+```bash
+python3 -m models.eval --algo ppo --ckpt models/checkpoints/ppo_random/ppo_final.zip --games 1000
+```
+
+(There is no `tools/train_smoke.py` — older docs reference it but it was never
+checked in. `--subproc` opts into SubprocVecEnv; default DummyVecEnv is faster here.)
 
 ## 7. Run all unit tests
 
 ```bash
-for t in tools/test_*.py; do
-    echo "=== $t ===";
-    python3 "$t" 2>&1 | tail -3;
-done
+# sim correctness + Catanatron cross-engine differential (pytest)
+python3 -m pytest sim/tests/ bridge/tests/ -q
 ```
 
-Expected: every suite ends with `ALL TESTS PASS` (or `ALL PERFT HASHES MATCH` for `test_perft.py`).
+`sim/tests/test_determinism.py` covers fixed-seed reproducibility;
+`bridge/tests/test_differential.py` + `test_obs_identity.py` are the
+cross-engine correctness gate. **Pin `PYTHONHASHSEED`** for a reproducible
+differential corpus (see `bridge/PLAN.md`). `test_end_to_end.py` is slow
+(full Catanatron games) — add `--ignore=bridge/tests/test_end_to_end.py`
+for a quick run.
 
 ## 8. Submit a SLURM job
 
@@ -131,11 +141,10 @@ source .venv/bin/activate
 
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
-python3 tools/train_smoke.py \
-    --total-timesteps 5000000 \
-    --device cuda \
-    --eval-episodes 500 \
-    --save checkpoints/ppo_v0_$SLURM_JOB_ID.zip
+python3 -m models.train_ppo \
+    --num-envs 16 \
+    --total-steps 10000000 \
+    --run-name ppo_v0_$SLURM_JOB_ID
 ```
 
 ## 9. Common pitfalls
@@ -152,16 +161,20 @@ python3 tools/train_smoke.py \
 
 | Run | Throughput |
 |---|---|
-| `bench_batched 4096` (single core) | ~12M steps/sec |
+| `bench_batched 4096` (single core) | ~11-12M steps/sec |
 | `bench_batched 4096` with OMP_NUM_THREADS=32 | ~150-300M steps/sec (depends on memory bandwidth) |
-| `train_smoke.py` via SB3 (Python loop dominates) | ~200-500 fps (env steps/sec) |
+| `python -m models.train_ppo` (SB3 MaskablePPO, 16 envs, DummyVecEnv) | **~21k fps** (env steps/sec, measured) |
 
-The native batched path is fast; the Python RL loop is the bottleneck during
-training. Future optimization: drive PPO directly off `BatchedEnv` with
-torch tensors instead of going through Gymnasium.
+**Correction (2026-05-27):** the earlier "~200-500 fps" figure was wrong by ~40×.
+Real PPO training throughput is **~21,600 fps** with `DummyVecEnv` (~14,800 with
+`SubprocVecEnv` — IPC pickling per step costs more than the ~50 ns C++ step, so
+DummyVecEnv is the default). 10M steps ≈ 8 min. **Throughput is NOT the training
+bottleneck at this scale** — the `BatchedEnv`-direct PPO loop is deferred, not
+needed. There is no `tools/train_smoke.py`; train via
+`python -m models.train_ppo` (see `models/PLAN.md`).
 
 ## 11. Reproducibility
 
 - Per-env RNG seeded via SplitMix64 from a master seed; identical sequences guaranteed.
-- `tools/perft_hashes.json` contains pinned trajectory hashes; `python3 tools/test_perft.py` verifies bit-exact reproducibility.
+- `sim/tests/test_determinism.py` verifies fixed-seed trajectory reproducibility (run via pytest). The Catanatron cross-engine differential additionally requires `PYTHONHASHSEED` pinned to reproduce its corpus run-to-run.
 - Document your cluster's `gcc --version`, `glibc` version, and the seed schedule used in any run.

@@ -38,7 +38,8 @@ namespace catan {
         4 * OBS_PER_PLAYER + OBS_SELF_PRIVATE + OBS_BOARD + OBS_GAME + OBS_TRADE;
 
     // Encode the env state into a flat float tensor from `player_pov`'s
-    // perspective. Counts are written as raw small floats (not normalized);
+    // perspective. Count fields are normalized by structural Catan maxima
+    // (see namespace norm in obs.cpp; mirrored in bridge/obs_encoder.py);
     // booleans/one-hot as 0.0 / 1.0. The encoding is fixed and stable;
     // changes here require RL agents to retrain.
     void write_obs(const GameState& s, const BoardLayout& b,
