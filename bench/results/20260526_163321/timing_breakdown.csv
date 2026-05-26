@@ -1,0 +1,4 @@
+component,n_samples,mean_ns,p50_ns,p95_ns,p99_ns,mean_us
+fastcatan  env.step(),21013,170.2,125.0,334.0,1667.0,0.17
+fastcatan  env.action_mask(),21013,133.7,125.0,167.0,167.0,0.134
+bridge     encode_obs(),2000,47809.2,47500.0,51627.0,56916.4,47.809

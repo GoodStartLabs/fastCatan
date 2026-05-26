@@ -205,7 +205,14 @@ def _cat_game(game_id: int, seed: int) -> GameRecord:
         k = player_key(state, c)
         vps.append(int(state.player_state.get(f"{k}_ACTUAL_VICTORY_POINTS", 0)))
 
-    winner_seat = state.color_to_index[winner_color] if winner_color else -1
+    # Index by fixed color (_CAT_COLORS order), NOT state.color_to_index:
+    # catanatron shuffles turn order internally, so color_to_index is a per-game
+    # permutation. vps[] above is built in _CAT_COLORS order, so the winner's VP
+    # must be looked up the same way (else winner VP reads a random opponent).
+    # This also makes "seat s" mean a fixed color in both sims (turn order varies
+    # via shuffle here / random start_player in fastcatan), so the per-seat win
+    # rates are measuring the same thing.
+    winner_seat = _CAT_COLORS.index(winner_color) if winner_color else -1
     steps = len(state.action_records)
     turns = sum(1 for r in state.action_records
                 if r.action.action_type == ActionType.END_TURN)
