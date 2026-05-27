@@ -6,13 +6,13 @@ Author is writing on RL for 4-player Settlers of Catan. Thesis goal: an RL agent
 
 This plan designs `fastCatan`: a greenfield C++23 simulator with nanobind Python bindings, Gymnasium interface, targeting **5×10⁷ steps/sec/node** to make M3 self-play feasible, with full 4-player rules including player-to-player trading intact. Correctness is enforced by invariant fuzzing, hand-built rule unit tests, and perft-style determinism hashes.
 
-Decisions confirmed by user: greenfield C++, Linux HPC only, full trading from M0 foundations.
+Decisions confirmed by user: greenfield C++, Linux only, full trading from M0 foundations.
 
 ## Architecture Summary
 
 | Decision | Choice | Reason |
 |---|---|---|
-| Language | C++23 | GCC 14.2 on dev + HPC frontend → full `std::mdspan`, deducing-this, `std::print`, `std::stacktrace`, multidim subscript. Mature perf tooling (PGO, VTune, SIMD, OpenMP); 26-week solo clock favors known toolchain |
+| Language | C++23 | GCC 14.2 → full `std::mdspan`, deducing-this, `std::print`, `std::stacktrace`, multidim subscript. Mature perf tooling (PGO, VTune, SIMD, OpenMP); 26-week solo clock favors known toolchain |
 | Binding | nanobind | 2–10× less per-call overhead than pybind11; native DLPack; step() crosses boundary constantly |
 | State layout | AoS per game, SoA across batch; ~512 B/env | Five cache lines/env; 1M envs fits RAM easily |
 | Action space | Flat discrete ~300, incremental legal-action mask | Masking is the longest branch-heavy path; incremental removes it |
@@ -22,7 +22,7 @@ Decisions confirmed by user: greenfield C++, Linux HPC only, full trading from M
 | Tensor handoff | DLPack zero-copy via `nanobind::ndarray` | No memcpy per step; PyTorch views same C++ buffer |
 | Gym API | Single-agent Gymnasium + perspective flip for self-play; PettingZoo AEC (done in M0) | 99% of RL libs target Gym; AEC wrapper needed only for trading-net training |
 | Build | CMake 3.27+ with scikit-build-core; GoogleTest + Google Benchmark via FetchContent | One build system; `pip install -e .` works for dev |
-| Platform | Linux x86_64 only; `-std=c++23 -O3 -march=native -flto -fno-exceptions -fno-rtti`, PGO in final mile. Toolchain: GCC 14.2 (Debian) confirmed on dev + HPC frontend. | HPC target; skip macOS/Windows CI complexity |
+| Platform | Linux x86_64 only; `-std=c++23 -O3 -march=native -flto -fno-exceptions -fno-rtti`, PGO in final mile. Toolchain: GCC 14.2 (Debian) confirmed on dev. | skip macOS/Windows CI complexity |
 
 ## Repository Layout
 
@@ -171,7 +171,17 @@ Enforced at three levels:
 
 1. **Internal invariants & scenarios** (`sim/tests/`, pytest): resource
    conservation, mask legality, phase/flag transitions, determinism
-   (fixed-seed trajectory), terminal reward.
+   (fixed-seed trajectory), terminal reward. Scaled to the **10⁷-game gate**
+   by the C++ fuzz harness `sim/fuzz_invariants.cpp` — random-legal play, the
+   same per-step invariants, OpenMP across cores (`ctest -R invariants` =
+   100k-game smoke ~2 s; `build/fuzz_invariants 10000000` = full gate ~3 min).
+   **M1 result: 0 invariant violations over 10⁷ games / 4.04×10¹⁰ steps.**
+   Finding: ~3 / 10⁷ random games never reach a winner — a rule-correct
+   **deadlock** (board built out + dev deck exhausted ⇒ the last 1–2 VP are
+   unreachable for every player; seed 2446268 stays ≤9 VP over 10⁸ steps),
+   not a bug — every per-step invariant holds throughout. `step_one` has no
+   no-progress terminal, so these games end only at the RL episode cap
+   (`models/env.py` `MAX_EPISODE_STEPS` → −1).
 
 2. **Cross-engine differential vs Catanatron** (the ground-truth oracle) —
    the M1 gate. A true co-stepping harness drives BOTH engines through the
@@ -219,7 +229,7 @@ all three; without `PYTHONHASHSEED` the corpus is not reproducible run-to-run.
 - C++23 simulator + nanobind bindings; Linux-x86_64 CI.
 - Full rules: building, dev cards, robber, bank/port + player-to-player trading.
 - Gymnasium 4-player env (single-agent wrapper) + PettingZoo AEC.
-- Incremental legal-action mask (296 used / 320 bits); surgical trade updater.
+- Incremental legal-action mask (286 used / 320 bits); surgical trade updater.
 
 ### M1 — Correctness, Baselines, Bridge
 
@@ -229,37 +239,82 @@ Goal: validate the C++ sim plays Catan correctly before any RL touches it. Self-
 - [x] Alpha-Beta baseline (Python): depth-limited minimax + multi-feature heuristic.
 - [x] Log capture: random baseline games (action stream, board state, seed). `ui/recorder.py` + `logs/game.jsonl.gz`.
 - [x] Log capture: Alpha-Beta baseline games.
-- [x] Catanatron bridge: topology map, action codec, obs encoder, run_eval. 251 bridge tests green (`bridge/tests/`).
+- [x] Catanatron bridge: topology map, action codec, obs encoder, run_eval. 281 bridge tests green (`bridge/tests/`), verified at the 1084/286 build + catanatron `41ba0db` (2026-05-27).
 - [x] Replay parity tests: `bridge/tests/test_parity_replay.py` walks shared-seed games action-by-action against Catanatron.
 - [x] **Cross-engine differential** (`bridge/tests/test_differential.py` + `test_obs_identity.py`): co-steps fastcatan *and* Catanatron on identical action streams, asserts full state + obs parity every ply (via the `state_mirror`/`state_inject`/`rng_force` harness). Found and fixed **5 real sim bugs** (see Correctness). 25-seed corpus green; residual ≤1–2% is Catanatron's own longest-road inconsistency (documented, exempted).
-- [x] Throughput + bottleneck dashboard: `bench/bench_throughput.py` (Python-path breakdown) + `bench/bench_step.cpp` & `bench/bench_batched.cpp` (pure-C++ floor, standalone CMake targets). `bench_throughput.py` gives the single-env per-component µs breakdown, batched kernel scaling with nanobind-dispatch isolation, and fastcatan-vs-Catanatron on equal footing (games/s, turns/s; steps/s flagged non-comparable). `bench/bench_comprehensive.py` covers the distribution half (episode length percentiles, win rates per seat, VP). **Bottlenecks named:** single-env baseline is *Python-bound* — the legal-action bit-scan (`legal_actions`) is the largest kernel (~410 ns, ~36% of per-step) and total Python overhead (scan + interpreter glue + policy) is ~80%; the pure-C++ `step_one` is only ~47 ns (Release, `bench_step` replay) ≈ 4% of the per-step budget, with another ~76 ns of nanobind dispatch + return-tuple alloc on top in the bound path. Batched hot path is *obs-encode-bound* — `write_obs` (~80 ns/env, 1084 floats) dominates `step_one` (~40 ns/env) once dispatch amortizes (dispatch floor ~40 ns/call). Note: `step_one` fuses rules+mask-update+RNG and is not separable from Python; combined it is ~47 ns so not the bottleneck. Single-env 0.75M steps/s (Python) vs batched 24M steps/s = the ~32× amortization that justifies `BatchedEnv`; pure-C++ floors are ~21M (single-env `step_one`) and ~11M/core (`bench_batched 4096`, single-thread, near-linear with OpenMP on HPC). Equal footing vs Catanatron random4: ~7× games/s and ~7× turns/s.
-- [ ] 10⁷-game invariant fuzz run (scaffolding in `sim/tests/test_invariants.py`, needs scaled execution).
+- [x] Throughput + bottleneck dashboard: `bench/bench_throughput.py` (Python-path breakdown) + `bench/bench_step.cpp` & `bench/bench_batched.cpp` (pure-C++ floor, standalone CMake targets). `bench_throughput.py` gives the single-env per-component µs breakdown, batched kernel scaling with nanobind-dispatch isolation, and fastcatan-vs-Catanatron on equal footing (games/s, turns/s; steps/s flagged non-comparable). `bench/bench_comprehensive.py` covers the distribution half (episode length percentiles, win rates per seat, VP). **Bottlenecks named:** single-env baseline is *Python-bound* — the legal-action bit-scan (`legal_actions`) is the largest kernel (~410 ns, ~36% of per-step) and total Python overhead (scan + interpreter glue + policy) is ~80%; the pure-C++ `step_one` is only ~47 ns (Release, `bench_step` replay) ≈ 4% of the per-step budget, with another ~76 ns of nanobind dispatch + return-tuple alloc on top in the bound path. Batched hot path is *obs-encode-bound* — `write_obs` (~80 ns/env, 1084 floats) dominates `step_one` (~40 ns/env) once dispatch amortizes (dispatch floor ~40 ns/call). Note: `step_one` fuses rules+mask-update+RNG and is not separable from Python; combined it is ~47 ns so not the bottleneck. Single-env 0.75M steps/s (Python) vs batched 24M steps/s = the ~32× amortization that justifies `BatchedEnv`; pure-C++ floors are ~21M (single-env `step_one`) and ~11M/core (`bench_batched 4096`, single-thread, near-linear with OpenMP). Equal footing vs Catanatron random4: ~7× games/s and ~7× turns/s.
+- [x] 10⁷-game invariant fuzz run. C++ harness `sim/fuzz_invariants.cpp` (OpenMP, random-legal play, per-step invariant checks mirroring the `sim/tests/test_invariants.py` spec: resource conservation, hand-size, VP/piece-stock bounds, phase/player ranges, non-empty mask, terminal winner). CMake target `fuzz_invariants` + `ctest -R invariants` (100k-game smoke, ~2 s). **Full gate green: 10⁷ games, 4.04×10¹⁰ steps, 0 invariant violations** (~176 s, 230M steps/s, 57k games/s on 24 cores). 3 / 10⁷ games hit the 10⁶-step cap without a winner — rule-correct non-termination, not an invariant breach: either a heavy-tail long game (seed 1366915 terminates at 194 018 steps) or a **deadlock** — board built out + dev deck exhausted ⇒ the last 1–2 VP are unreachable for every player (seed 2446268: max VP across all players never exceeds 9 over 10⁸ steps; longest road + largest army already locked). No-winner games have no sim-level terminal; handled at the RL level by `models/env.py` `MAX_EPISODE_STEPS` (truncate → −1).
 - **Gate: zero rule divergence vs Catanatron on replay corpus; per-component bottleneck named with measured µs in dashboard.**
 
-### M2 — Initial RL Agent
+### M2 — Initial RL Agent (DONE ✅ — gate met)
 
 - [x] Shared Gym env over `fastcatan.Env` (`models/env.py`, seat 0 = learner, seats 1–3 random).
 - [x] MaskablePPO trainer (`models/train_ppo.py`) + checkpoint at `models/checkpoints/ppo_random/ppo_final.zip`.
 - [x] Reference trainers in separate files for thesis breadth: A2C, DQN, MuZero scaffold (`models/train_{a2c,dqn,muzero}.py`) + checkpoints.
 - [x] Eval harness `models/eval.py` (win rate + 95% Wilson CI vs random over N games).
 - [x] Lock observation encoder + reward. **Obs frozen**: 1084 floats, count fields normalized by structural Catan maxima (divisors in `src/catan/obs.cpp` `namespace norm`, mirrored in `bridge/obs_encoder.py` + `ui/obs_decoder.py` — keep in sync; verified by `test_obs_identity`). **Reward frozen**: sparse ±1 terminal (+1 on the action reaching 10 VP, −1 if it lets an opponent win), no shaping; `models/env.py` treats a stalled game (`turn_count >= MAX_TURNS=1000`) and a no-winner terminal as a **loss** (−1). NOTE: changing obs/reward invalidates trained checkpoints — the old `models/checkpoints/*` were deleted after this freeze.
-- [ ] ⚠️ **Stall cap is ineffective as written.** `models/env.py` caps on `turn_count >= MAX_TURNS`, but `turn_count` only increments on END_TURN (`src/catan/rules.cpp:540`). The real degenerate stall is a *within-turn* `TRADE_OPEN`/`TRADE_CANCEL` loop (greedy/argmax policy never ends its turn), so `turn_count` freezes and the −1 cap never fires. Empirically, a trained greedy policy stalled ~85% of games to the step limit. **Fix: cap on a per-episode step counter (count `env.step` calls), and/or cap `TRADE_OPEN` re-opens per turn in the mask.** The −1 *values* are correct everywhere; only the trigger is broken.
-- [ ] Gate run: ≥1000 games of PPO checkpoint vs random with win rate ≥0.90 recorded. (Retrain on the frozen interface first — pre-freeze checkpoints are gone.) NOTE: eval with **sampling**, not `--deterministic` (argmax triggers the trade-loop stall above). A real 10M-step run (~8 min, DummyVecEnv ~21.6k fps) reached ~90% sampled win rate before the checkpoints were cleared.
+- [x] ✅ **Stall fixed (two-part, `models/env.py`).** The dominant stall is a *within-turn* `ADD_WANT`→`TRADE_CANCEL` trade-compose loop that never opens a trade nor ends the turn, so `turn_count` (only bumped on END_TURN, `src/catan/rules.cpp:540`) froze and the old `turn_count`-based −1 cap never fired (~85% of greedy/argmax games stalled to the limit). **Primary fix:** a per-turn **trade-compose cap** in `action_masks()` (`MAX_TRADE_COMPOSE_PER_TURN=20` masks the ADD/REMOVE/OPEN block, ids 268–288, once spent; CANCEL/ACCEPT/DECLINE/CONFIRM stay legal so the mask is never emptied). **Backstop:** the episode cap recounted in per-episode *learner steps* (`MAX_EPISODE_STEPS=3000`), not `turn_count`. A step-counter cap *alone* is insufficient — it truncates *winnable* games (the policy wins, just after thousands of churn steps, so capping mid-churn scores a win as a loss). **M1 fuzz independently confirmed a no-winner terminal is necessary**: ~3/10⁷ random games reach a rule-correct deadlock (board built out + dev deck exhausted ⇒ last VP unreachable) with no sim-level terminal (see §M1).
+- [x] ✅ **Gate MET (2026-05-27).** `ppo_capped_50m` (MaskablePPO, 768 envs, 50M steps, ~32 min) vs random: **99.4%** over 1000 games (sampling, 95% CI [0.987, 0.997], 0 no-winner) and **99.5%** (200-game deterministic). Eval with **sampling** for undertrained models (argmax stalls/underperforms before convergence; 10M steps was too few — converges ~15–20M). ⚠️ This run is on the **stale 724/296 build** (`.venv`): it *proves* the M2 gate, but the checkpoint is **obsolete against the rebuilt 1084/286 interface** (won't load) — M3/M4 retrain there (`ppo_1084_20m`, see `AB/REPRODUCIBILITY.md`).
 - **Gate: >90% win rate vs random baseline over 1000 four-player games.**
 
-### M3 — Self-Play Training
+### M3 — Self-Play Training (scaffolding DONE ✅; self-play verified working; full run pending a 1084 seed)
 
-- Iterative self-play schedule (frozen snapshot rotation).
-- Hyperparam sweep over learning rate, entropy, snapshot interval.
-- **Gate: latest model beats N-step-ago snapshot >55%.**
+Self-contained in `models/selfplay/` (full detail in its `PLAN.md`). **No C++ change
+needed**: `Env.write_obs(seat, buf)` is perspective-flipped, so a seat-0-trained policy
+plays any seat on that seat's POV obs — opponents are driven from Python, exactly where
+`FastCatanEnv` already drives the random ones.
+
+- [x] **Iterative self-play schedule** (`train_selfplay.py`): one MaskablePPO + one
+  DummyVecEnv; an `OpponentPool` of frozen snapshots, **shared & mutated across rounds**.
+  Each round: `learn(steps_per_round)` → freeze `snap_N.zip` → add to pool → inline gate.
+  Warm-start from an M2 checkpoint via `set_parameters` (weights only, so swept lr/ent
+  still apply). Per episode the pool samples seats 1-3: prob `p_random` → random
+  (anti-collapse / keeps weak-play robustness), else recency-weighted recent snapshots.
+  Empty pool → all random, so round 0 auto-bootstraps off random even without warm-start.
+  Opponents run on CPU (single-obs inference; ~2× the CUDA per-call rate) → ~1.3k fps.
+- [x] **Hyperparam sweep** (`sweep.py`): grids lr × ent × snapshot-interval × arch ×
+  **lr-schedule × target-kl** — the last two added to fight self-play's diminishing
+  per-round returns (linear lr decay settles late rounds vs oscillating; KL early-stop
+  keeps updates conservative as the opponent pool shifts each round). One subprocess per
+  cell → `summary.json` → aggregated CSV/markdown table.
+- [x] **Gate recalibrated to balanced 2-vs-2** (`gate.py`): the naive 1-vs-3 (seat0=latest
+  vs 3×N-ago) has neutral **0.25** in a 4-player game, making `>0.55` a "win >2× fair
+  share" dominance bar rather than "better than". 2-vs-2 (2 seats latest, 2 N-ago, seat
+  assignment rotated to cancel seat bias) → **neutral 0.50**, so `>0.55` = meaningfully
+  better, the intended semantics. Wilson CI + a `conclusive` guard (fails honestly when
+  too many games stall). `eval_seats.py` keeps the per-seat 1-vs-3 diagnostic.
+- [x] **Self-play works** (smoke on the **stale 724/296 `.venv` build**, warm-started from
+  an M2 vs-random checkpoint, `--no-p2p-trade`): improves **monotonically** — per-seat
+  4-way newest-vs-r3/r2/r1 = 0.42 / 0.34 / 0.19 / 0.06; recalibrated gate r4-vs-r3 =
+  **0.642 PASS**, equal-policy = 0.483 (neutral confirmed). Mechanically flawless (0%
+  no-winner under `--no-p2p-trade`, clean CIs). Earlier "instability" was a misread of the
+  miscalibrated 1-vs-3 gate; under 2-vs-2 every round beats its predecessor.
+- [~] **Trade-loop stall**: four strong policies stall the TRADE_OPEN/CANCEL loop → no
+  winner → gate undecidable. Worked around with **`--no-p2p-trade`** (Python mask AND-NOT,
+  applied in train AND gate). M2's later per-turn **trade-compose cap** (`action_masks`,
+  §M2) plausibly mitigates this with trading intact — **re-verify on 1084 whether
+  `--no-p2p-trade` is still needed** (the thesis wants full trading).
+- [ ] **Run the schedule + sweep — BLOCKED on a 1084 seed checkpoint.** All 724/296
+  checkpoints were deleted in the M2 retrain; the canonical interface is now **1084/286**
+  (anaconda build; `.venv` is stale 724/296). Retrain the M2 seed on 1084
+  (`ppo_1084_20m`, §M2) → warm-start the sweep from it. **Curriculum: random-first (M2)
+  → warm-start self-play** is the right order — sparse ±1 reward can't cold-start against
+  strong opponents; keep `p_random` > 0 throughout. All M3 code reads `OBS_SIZE`/
+  `NUM_ACTIONS` dynamically, so it runs unchanged on 1084.
+- **Gate: latest model beats N-step-ago snapshot >55% (balanced 2-vs-2, neutral 0.50, conclusive).**
 
 ### M4 — Alpha-Beta Eval + Final Model
 
-- [~] Tournament harness `play(agent_a, agent_b, n_games) -> (win_rate, 95% CI)` (eval.py covers PPO-vs-random shape; needs PPO-vs-AB wiring).
-- [ ] Final model vs Alpha-Beta over ≥1000 four-player games.
-- [ ] 10⁸-step soak test for stability.
-- [ ] Reproducibility doc: CMake args, GCC version, glibc, seed schedule, training config.
-- **Thesis gate: >25% win rate vs Alpha-Beta with 95% CI.**
+> Harness lives in `AB/`, run in the **anaconda** 1084/286 env: the trained policy
+> plays seat RED via `bridge/CatanatronBridge` inside Catanatron's engine vs
+> `AlphaBetaPlayer`. Catanatron is a **pinned git build** (`41ba0db`; root
+> `requirements.txt`, `AB/REPRODUCIBILITY.md` §6), not PyPI.
+
+- [x] Tournament harness (`AB/tournament.py` + `AB/policy.py`): policy-via-bridge vs `AlphaBetaPlayer`/`ValueFunctionPlayer`/`RandomPlayer`, win rate + 95% Wilson CI + the thesis gate (CI-low > 0.25) → `AB/results/*.json`. Pipeline validated end-to-end on the 1084/286 interface (`test_obs_identity` 5/5 encoder↔C++ parity; uniform-bridge games vs Value/AlphaBeta complete — `AB/results/validation_1084.md`).
+- [ ] Final model vs Alpha-Beta over ≥1000 four-player games. **Harness ready; blocked on a 1084/286-trained model** — `models/checkpoints/` was wiped (every checkpoint was stale 724/296, obsolete against the rebuilt 1084 binary); retrain from scratch on 1084 (anaconda), then run. AlphaBeta ≈6.4 s/game unpruned (~1.8 h/1000); use `--ab-prune`.
+- [~] 10⁸-step soak test for stability: harness done (`AB/soak.py` — finite-obs + mask-integrity + RSS-leak checks); smoked green (10k steps, RSS flat 1.00×); full run pending (~24 min at ~70k steps/s).
+- [x] Reproducibility doc: `AB/REPRODUCIBILITY.md` (toolchain, build flags + `editable.rebuild=true`, two-env setup, catanatron git pin, seeds, training config).
+- **Thesis gate: >25% win rate vs Alpha-Beta with 95% CI** (Wilson CI lower bound > 0.25).
 
 ## Top 3 Risks
 
@@ -297,7 +352,7 @@ At 5×10⁷ steps/sec with N=4096 envs, a `step()` call is ~80 µs of native wor
 
 ## Verification
 
-- **Invariants:** `ctest -R invariants` runs the 10⁷-game fuzz loop. Must pass green before any throughput claim is made.
+- **Invariants:** `ctest -R invariants` runs a fast 100k-game smoke (~2 s); the full thesis gate is `build/fuzz_invariants 10000000` (10⁷ games, ~3 min, 24 cores). Both check per-step invariants over random-legal play; must be green (0 violations) before any throughput claim is made.
 - **Determinism:** `ctest -R perft` runs fixed-seed/fixed-policy 100k-step trajectory, compares hash to the committed value.
 - **Throughput:** `python -m fastcatan.benchmarks.throughput --n-envs 4096 --steps 100000 --warmup 1000` reports steps/sec. Run 3× under `numactl --cpubind=0 --membind=0`; take median. Gate on per-milestone target.
 - **RL smoke test (M2 onward):** `python scripts/ppo_smoke.py` — 1M-step PPO run vs random opponent, must reach >90% win rate.

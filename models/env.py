@@ -26,10 +26,32 @@ MASK_WORDS = fastcatan.MASK_WORDS
 
 LEARNER_SEAT = 0
 WIN_VP = 10
-# Episode cap. Termination is VP-only (a degenerate stall — builds nothing,
-# declines all — could run unbounded; turn_count is uint16 and would wrap).
-# ~2.5x the /400 obs turn horizon: a safety truncation, not a tuned param.
-MAX_TURNS = 1000
+
+# --- Stall control -------------------------------------------------------
+# The dominant stall is a within-turn trade-compose loop: ADD_WANT is legal
+# whenever trade_want[r] < 19 and CANCEL whenever the scratch is non-empty
+# (rules.cpp:1491-1504), so ADD_WANT -> CANCEL -> ADD_WANT churns forever
+# WITHOUT ever opening a trade or ending the turn. turn_count only advances on
+# END_TURN (rules.cpp:540), so it stays frozen and a turn_count cap never fires.
+#
+# Primary fix: bound trade-compose actions per turn at the mask level
+# (action_masks). After MAX_TRADE_COMPOSE_PER_TURN of them the compose bits are
+# masked off, forcing build / bank-trade / END_TURN. Compose actions are the
+# contiguous block ADD_GIVE_BASE..TRADE_OPEN. CANCEL/ACCEPT/DECLINE/CONFIRM stay
+# legal (CANCEL is the always-available escape from a pending trade, so the mask
+# can never be emptied; and without re-composing the loop can't restart). Bank
+# trades (TRADE_BASE) are excluded — they consume resources and self-limit.
+# 20 is well above any legitimate single-turn trade composition (a real offer is
+# a handful of ADD_* + OPEN) but far below the thousands seen in the stall.
+_A = fastcatan.action
+TRADE_COMPOSE_IDS = np.arange(_A.TRADE_ADD_GIVE_BASE, _A.TRADE_OPEN + 1, dtype=np.intp)
+MAX_TRADE_COMPOSE_PER_TURN = 20
+
+# Backstop only: episode cap counted in *learner steps* (calls to step()), NOT
+# turn_count (frozen during the loop above). With the trade-compose cap in place
+# this should rarely fire; it guards any residual non-terminating policy. A
+# random-policy learner finishes in <=~2100 steps (40-game sample, max 2088).
+MAX_EPISODE_STEPS = 3000
 
 
 def _unpack_mask(mask_words: np.ndarray) -> np.ndarray:
@@ -73,6 +95,8 @@ class FastCatanEnv(gym.Env):
         self._rng = random.Random(seed ^ 0xC0FFEE)
         self._obs_buf = np.zeros(OBS_SIZE, dtype=np.float32)
         self._mask_buf = np.zeros(MASK_WORDS, dtype=np.uint64)
+        self._ep_steps = 0
+        self._compose_count = 0  # trade-compose actions in the current turn
 
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(OBS_SIZE,), dtype=np.float32
@@ -125,6 +149,8 @@ class FastCatanEnv(gym.Env):
 
         game_seed = self._seed_seq.getrandbits(64)
         self._env.reset(game_seed)
+        self._ep_steps = 0
+        self._compose_count = 0
 
         done, term_r = self._step_opponents()
         if done:
@@ -137,6 +163,14 @@ class FastCatanEnv(gym.Env):
         self, action: int
     ) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         action = int(action)
+        self._ep_steps += 1
+        # Reset the per-turn compose budget at each turn boundary (ROLL starts
+        # the learner's action phase; END_TURN closes it). Count compose actions
+        # so action_masks() can gate them once the budget is spent.
+        if action == _A.ROLL_DICE or action == _A.END_TURN:
+            self._compose_count = 0
+        elif _A.TRADE_ADD_GIVE_BASE <= action <= _A.TRADE_OPEN:
+            self._compose_count += 1
         _, done = self._env.step(action)
         if done:
             return self._read_obs(), self._terminal_reward(), True, False, {}
@@ -145,7 +179,7 @@ class FastCatanEnv(gym.Env):
         if done:
             return self._read_obs(), term_r, True, False, {}
 
-        if self._env.turn_count >= MAX_TURNS:
+        if self._ep_steps >= MAX_EPISODE_STEPS:
             # Stalled game (no winner): treat as terminal loss, no bootstrap.
             return self._read_obs(), -1.0, True, False, {}
 
@@ -154,7 +188,15 @@ class FastCatanEnv(gym.Env):
     # --- MaskablePPO hook ---
 
     def action_masks(self) -> np.ndarray:
-        return _unpack_mask(self._read_mask())
+        mask = _unpack_mask(self._read_mask())
+        if self._compose_count >= MAX_TRADE_COMPOSE_PER_TURN:
+            gated = mask.copy()
+            gated[TRADE_COMPOSE_IDS] = False
+            # Only apply if a non-trade alternative remains, so we never hand
+            # MaskablePPO an all-False mask (e.g. a forced trade-resolution state).
+            if gated.any():
+                mask = gated
+        return mask
 
 
 def make_env(seed: int = 0):

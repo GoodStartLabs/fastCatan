@@ -20,7 +20,7 @@ PLAN.md M1). Single node:
 |---|---|
 | Pure C++ batched `step_one` (1 thread) | ~10–50M (cache-bound; smaller batch faster) |
 | Python batched hot path (mask + policy + obs + step) | ~1M |
-| HPC, OpenMP across cores | near-linear (Linux/GCC; the macOS/clang build links no OpenMP) |
+| OpenMP across cores | near-linear (Linux/GCC; the macOS/clang build links no OpenMP) |
 
 Far above the M1 target (5×10⁵) and ~7× Catanatron on equal footing
 (games/s, random-vs-random). **The C++ `step_one` is not the bottleneck** — in
@@ -39,9 +39,15 @@ cd fastcatan
 python3 -m venv .venv && source .venv/bin/activate
 pip install -U pip
 pip install cmake ninja nanobind scikit-build-core    # build deps
-pip install -e . --no-build-isolation                  # builds the C++ extension
+pip install -e . --no-build-isolation --config-settings=editable.rebuild=true  # build + auto-rebuild on source edits
 pip install torch sb3-contrib stable-baselines3         # for training
+pip install -r requirements.txt                         # catanatron (pinned) for the bridge/eval path
 ```
+
+> `editable.rebuild=true` makes scikit-build-core recompile the extension on the
+> next `import fastcatan` after any C++ change. Without it, `pip install -e .`
+> builds once and the binary silently goes stale when `obs.hpp`/`mask.hpp` change
+> (this caused a 724/296-vs-1084/286 drift; see `AB/REPRODUCIBILITY.md` §4–5).
 
 Verify:
 
@@ -50,9 +56,15 @@ python3 -c "import fastcatan as fc; print(fc.OBS_SIZE, fc.NUM_ACTIONS)"
 # 1084 286
 ```
 
-### HPC
+Run the correctness gates (after `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j`):
 
-See [`HPC.md`](HPC.md) — module loads, GCC 14.2 + CUDA setup, SLURM job template.
+```bash
+ctest --test-dir build -R invariants            # 100k-game invariant fuzz smoke (~2s)
+build/fuzz_invariants 10000000                  # full 10⁷-game gate (~3 min, OpenMP)
+python3 -m pytest sim/tests/ bridge/tests/ -q   # unit + cross-engine differential
+```
+
+M1 gate result: 0 invariant violations over 10⁷ games / 4.04×10¹⁰ steps (see PLAN.md §M1).
 
 ## Hello world
 
@@ -210,13 +222,13 @@ src/catan/               core C++ implementation
 bindings/pycatan/        nanobind module
 python/fastcatan/        Python package (re-exports + Gym/PettingZoo wrappers)
 sim/tests/               Python correctness tests (invariants, scenarios, determinism, mask)
+sim/fuzz_invariants.cpp  10⁷-game C++ invariant fuzz gate (ctest -R invariants; see PLAN.md M1)
 bridge/                  Catanatron interop + cross-engine differential (see bridge/PLAN.md)
 models/                  RL trainers (PPO + A2C/DQN/MuZero) + Gym env (see models/PLAN.md)
 ui/                      obs decoder / board render / replay (see ui/PLAN.md)
 examples/                random + alpha-beta player references
 bench/                   throughput benchmarks (bench_throughput.py + C++ bench_step/bench_batched)
-CMakeLists.txt           build system (HPC-ready)
+CMakeLists.txt           build system
 pyproject.toml           scikit-build-core editable install
 PLAN.md                  thesis plan + milestone tracking
-HPC.md                   HPC build + SLURM setup
 ```

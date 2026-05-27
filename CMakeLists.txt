@@ -18,7 +18,7 @@ if(_IPO_SUPPORTED AND CMAKE_BUILD_TYPE STREQUAL "Release")
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
 endif()
 
-# Common flags. HPC target per PLAN.md: GCC 14.2 + Linux x86_64.
+# Common flags. Target per PLAN.md: GCC 14.2 + Linux x86_64.
 set(FCATAN_RELEASE_FLAGS
     -O3 -march=native -fno-exceptions -fno-rtti -Wall -Wextra)
 
@@ -34,7 +34,7 @@ target_compile_options(fastcatan_core PRIVATE
 set_target_properties(fastcatan_core PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
-# OpenMP — optional. Macs need libomp from homebrew; HPC GCC has it built-in.
+# OpenMP — optional. Macs need libomp from homebrew; Linux GCC has it built-in.
 find_package(OpenMP)
 if(OpenMP_CXX_FOUND)
     target_link_libraries(fastcatan_core PUBLIC OpenMP::OpenMP_CXX)
@@ -51,7 +51,7 @@ endif()
 #   build/bench_step                  # single-env: step_one + random play
 #   build/bench_batched 4096 5000     # batched (uses OpenMP if available)
 # These corroborate the nanobind-dispatch isolation in
-# bench/bench_throughput.py. See HPC.md §4.
+# bench/bench_throughput.py.
 # --------------------------------------------------------------------
 if(NOT SKBUILD)
     foreach(_bench bench_step bench_batched)
@@ -60,6 +60,29 @@ if(NOT SKBUILD)
         target_compile_options(${_bench} PRIVATE
             $<$<CONFIG:Release>:${FCATAN_RELEASE_FLAGS}>)
     endforeach()
+
+    # ----------------------------------------------------------------
+    # Invariant fuzz harness — the M1 correctness gate (PLAN.md §M1,
+    # Verification). Plays random-legal games in pure C++ and checks
+    # per-step game invariants; the readable spec lives in
+    # sim/tests/test_invariants.py. OpenMP pragmas live in this TU, so it
+    # links OpenMP directly (the bench targets inherit it only via core).
+    #   build/fuzz_invariants 10000000     # full thesis gate (~minutes)
+    #   ctest -R invariants                # fast CI smoke (100k games)
+    # ----------------------------------------------------------------
+    add_executable(fuzz_invariants sim/fuzz_invariants.cpp)
+    target_link_libraries(fuzz_invariants PRIVATE fastcatan_core)
+    target_compile_options(fuzz_invariants PRIVATE
+        $<$<CONFIG:Release>:${FCATAN_RELEASE_FLAGS}>)
+    if(OpenMP_CXX_FOUND)
+        target_link_libraries(fuzz_invariants PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+
+    enable_testing()
+    add_test(NAME invariants COMMAND fuzz_invariants 100000)
+    set_tests_properties(invariants PROPERTIES
+        TIMEOUT 900
+        PASS_REGULAR_EXPRESSION "invariant failures: 0")
 endif()
 
 # --------------------------------------------------------------------

@@ -1,0 +1,12 @@
+# Runtime dependencies for the fastCatan bridge / training stack.
+# Install the C++ extension itself with:  pip install -e .
+# Then:  pip install -r requirements.txt
+
+# catanatron — PINNED to a specific commit on purpose.
+# The bridge imports `catanatron.models.tiles` (LandTile, Port). Newer
+# catanatron builds (the 3.3.0 wheel on PyPI) folded those classes into
+# `catanatron.models.map`, which breaks bridge import. Commit 41ba0db
+# ("deterministic discards", #362) is the version this bridge targets and
+# is verified against (281/281 bridge tests pass). Do NOT replace with an
+# unpinned `catanatron` — it will pull an incompatible build.
+catanatron[gym] @ git+https://github.com/bcollazo/catanatron.git@41ba0db

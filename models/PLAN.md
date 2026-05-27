@@ -11,25 +11,46 @@
 > - **`train_ppo.py` vectorizes via SB3.** Default is now **`DummyVecEnv`**
 >   (`--subproc` to opt into SubprocVecEnv). DummyVecEnv is ~1.45× faster here
 >   because the C++ sim is so cheap that per-step IPC pickling dominates.
-> - **Shapes: `OBS_SIZE=1084`, `NUM_ACTIONS=286`** (NOT 724 / 296 — those
->   numbers below are stale). Mask is `uint64[5]`, 296 *bits* used.
+> - **Shapes: `OBS_SIZE=1084`, `NUM_ACTIONS=286`** (286 mask bits in `uint64[5]`).
+>   ⚠️ This is the **current build**, but the `.so` was a stale **724 / 296** build
+>   until the **2026-05-27 rebuild** (the 1084 build is now the **anaconda**
+>   interpreter; `.venv` is still 724). **`ppo_capped_50m` and every existing
+>   checkpoint were trained at 724/296 and are OBSOLETE against the 1084 build**
+>   (won't load — wrong obs *and* action dim); retrain on 1084 before M4 eval / M3
+>   warm-start. (Verified: headers compile to 1084/286; `ppo_capped_50m` loads as
+>   obs (724,) act 296. See `AB/REPRODUCIBILITY.md` §4–5.)
 > - **Reward (env.py):** +1 learner win; **−1 for every non-win terminal**
 >   (opponent win, no-winner, and a `turn_count>=MAX_TURNS` stall cap → −1,
->   `terminated=True`). ⚠️ **KNOWN BUG:** the stall cap tests `turn_count`,
->   which only increments on END_TURN (`rules.cpp:540`). The real stall is a
->   *within-turn* `TRADE_OPEN/CANCEL` loop → `turn_count` frozen → cap never
->   fires. **Fix: cap on a per-episode step counter, not `turn_count`.**
-> - **PPO works.** The committed `checkpoints/ppo_random/ppo_final.zip` is an
->   **untrained 5k-step smoke run** (evals ~27% = random). A real 10M-step run
->   (~8 min at ~21.6k fps) reached **~90% win vs random** (sampling eval). See
->   [[ppo-training-reality]]. Throughput is NOT the bottleneck — the
->   BatchedEnv-direct PPO loop is deferred. **Obs normalization is now DONE
->   (frozen)**; reward shaping was considered and **rejected** (keep sparse ±1
->   — avoids reward hacking, clean for M3 self-play). Remaining lever: the
->   stall-cap fix, then retrain.
-> - **Greedy (argmax) eval stalls** (~85% of games hit the step cap via the
->   trade loop); use **sampling** eval. Real fix = stall-cap-on-steps and/or
->   capping `TRADE_OPEN` re-opens per turn in the mask.
+>   `terminated=True`). ✅ **FIXED (2026-05-27):** two-part fix in `env.py`.
+>   (1) **Primary** — a per-turn **trade-compose cap** in `action_masks()`
+>   (`MAX_TRADE_COMPOSE_PER_TURN=20` masks the ADD/REMOVE/OPEN block, ids 268–288,
+>   once spent; CANCEL/ACCEPT/DECLINE/CONFIRM stay legal so the mask is never
+>   emptied). The real stall is a *within-turn* `ADD_WANT`→`CANCEL` churn that
+>   never opens a trade nor ends the turn, so `turn_count` (only bumped on
+>   END_TURN, `rules.cpp:540`) froze and the old cap never fired — and a pure
+>   step-counter cap alone is **insufficient**: it truncates *winnable* games
+>   (the policy wins, just after thousands of churn steps, so capping mid-churn
+>   counts a win as a loss). (2) **Backstop** — episode cap recounted in
+>   *learner steps* (`MAX_EPISODE_STEPS=3000`), not `turn_count`. The **M1 fuzz
+>   independently proved a no-winner terminal matters**:
+>   ~3/10⁷ random games never reach a winner (board built out + dev deck
+>   exhausted ⇒ last VP unreachable — a rule-correct *deadlock*, not a bug; see
+>   PLAN.md §M1). `step_one` has no no-progress terminal, so a no-winner
+>   truncation → −1 is mandatory, not just defensive.
+> - **PPO PASSES THE M2 GATE (2026-05-27).** `checkpoints/ppo_capped_50m/ppo_final.zip`
+>   (MaskablePPO, 768 envs, 50M steps, ~32 min) wins **99.4% vs random**
+>   (1000-game sampling, CI [0.987, 0.997], 0 no-winner) **and 99.5%** (200-game
+>   deterministic, CI [0.972, 0.999]) — both clear the 0.90 CI-low bar. **10M
+>   steps was too few** (training win-rate still climbing at ~0.83); it converges
+>   ~15–20M. See [[ppo-training-reality]]. Throughput is NOT the bottleneck — the
+>   BatchedEnv-direct PPO loop is deferred. **Obs normalization DONE (frozen)**;
+>   reward shaping **rejected** (keep sparse ±1 — avoids reward hacking, clean
+>   for M3 self-play).
+> - **Eval modes:** with the trade-compose cap, both sampling and deterministic
+>   terminate cleanly (0 no-winner in 1200 games). Deterministic underperformed
+>   *only* on the undertrained 10M model (75.5% — argmax locks into degenerate
+>   trajectories); the converged 50M model scores ~99% either way. Prefer
+>   sampling while a model is still training.
 > - `models/eval.py` is **single-env** (`FastCatanEnv`), not BatchedEnv.
 >   Eval reward = `2·winrate − 1`, so `ep_rew_mean` is a live win-rate proxy.
 > - Benchmarks: `bench/bench_throughput.py` (Python-path breakdown + bottleneck
@@ -37,8 +58,13 @@
 >   (distribution parity), `bench/bench_step.cpp` + `bench/bench_batched.cpp`
 >   (pure-C++ floor). Catanatron quirks: see [[catanatron-seat-shuffle]].
 >
-> **Remaining:** stall-cap fix → retrain → ≥1000-game gate run (≥0.90 CI-low,
-> both sampling & deterministic).
+> **M2 GATE: MET ✅** stall-cap fix → retrained 50M (`ppo_capped_50m`) →
+> 1000-game gate passed (sampling 99.4%, deterministic 99.5%). ⚠️ Run on the
+> **stale 724/296 build** — it *proves* the gate but is **obsolete vs the 1084
+> build** (see ⚠️ at top); M3/M4 retrain there. The pre-cap runs (`ppo_random_10m`,
+> `ppo_random_768`) and the undertrained 10M `ppo_capped_768` were **deleted**
+> (2026-05-27) — trained without the cap or before convergence (`ppo_random_768`
+> = 66.7% capped). Next: M3 self-play.
 >
 > **Obs/reward FROZEN (done).** Obs count fields normalized by structural Catan
 > maxima — divisors in `src/catan/obs.cpp` `namespace norm`, mirrored in
@@ -46,7 +72,9 @@
 > `bridge/tests/test_obs_identity.py` (keep all three in sync). Reward sparse
 > ±1 terminal, non-win terminals = −1. The obs change **invalidated all old
 > checkpoints** — `checkpoints/*` were deleted; retrain on the frozen interface.
-> (⚠️ stall-cap-on-`turn_count` bug above is still open.)
+> (✅ stall-cap-on-`turn_count` bug above is now fixed — primary fix is the
+> per-turn trade-compose cap in `action_masks()`, with a `step()`-count backstop;
+> M1 fuzz confirmed the deadlock the backstop guards against is real.)
 >
 > ---
 >
@@ -117,7 +145,7 @@ Use as-is: +1 on win-action, -1 if action lets opponent win, 0 else (bindings.cp
 ### 4. Training defaults (`train_ppo.py`)
 
 Industry defaults, light tweaks for discrete-action self-play:
-- `policy="MlpPolicy"` (Box obs → no CNN needed; 1084 dims, 2× 256 hidden by default)
+- `policy="MlpPolicy"` (Box obs → no CNN needed). **Net size is the `--net-arch` CLI arg** (comma-separated, applied to pi & vf). Default `64,64` = the SB3 MlpPolicy default — *not* 256×256 as earlier drafts claimed. 64-wide on a 1084-dim obs is small: fine vs random (M2), likely a ceiling vs Alpha-Beta (M4). Scale at M3 (e.g. `--net-arch 256,256`) as a sweep axis; bigger net = slower fps (cheap C++ sim ⇒ the policy net is the throughput bottleneck).
 - `n_steps=512`, `batch_size=4096`, `n_epochs=4`
 - `learning_rate=3e-4`, `gamma=0.999` (Catan episodes are long, ~60–200 actions/seat)
 - `ent_coef=0.01`, `clip_range=0.2`

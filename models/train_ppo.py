@@ -59,6 +59,13 @@ def main() -> None:
     p.add_argument("--gae-lambda", type=float, default=0.95)
     p.add_argument("--ent-coef", type=float, default=0.01)
     p.add_argument("--clip-range", type=float, default=0.2)
+    p.add_argument("--net-arch", type=str, default="64,64",
+                   help="Hidden layer sizes for the pi and vf nets, comma-separated. "
+                        "Default '64,64' = the SB3 MlpPolicy default (small for a "
+                        "1084-dim obs: fine vs random, likely a ceiling vs Alpha-Beta). "
+                        "Scale up for M3 self-play / M4, e.g. '256,256' or '512,256' — "
+                        "see models/PLAN.md §4. Bigger net = slower fps (the C++ sim is "
+                        "cheap, so the policy net becomes the throughput bottleneck).")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--save-dir", type=str, default=str(CKPT_DIR))
     p.add_argument("--save-freq", type=int, default=500_000)
@@ -73,11 +80,17 @@ def main() -> None:
     save_dir.mkdir(parents=True, exist_ok=True)
     tb_dir = save_dir / "tb"
 
+    # net_arch applies to both the policy and value heads (SB3 reads a flat list
+    # as pi=vf=list). Default "64,64" reproduces the implicit SB3 default, so
+    # existing checkpoints stay architecturally identical.
+    net_arch = [int(x) for x in args.net_arch.split(",") if x.strip()]
+
     env = _build_vec_env(args.num_envs, args.seed, use_subproc=args.subproc)
 
     model = MaskablePPO(
         MaskableActorCriticPolicy,
         env,
+        policy_kwargs=dict(net_arch=net_arch),
         n_steps=args.n_steps,
         batch_size=args.batch_size,
         n_epochs=args.n_epochs,
@@ -90,6 +103,8 @@ def main() -> None:
         tensorboard_log=str(tb_dir),
         verbose=1,
     )
+    print(f"[train] run={args.run_name} net_arch={net_arch} "
+          f"num_envs={args.num_envs} total_steps={args.total_steps} lr={args.lr}")
 
     ckpt_cb = CheckpointCallback(
         save_freq=max(1, args.save_freq // args.num_envs),

@@ -71,10 +71,9 @@ zero-copy (no pickling, no per-step copies).
 fastCatan/
 ├── README.md              project intro + quickstart
 ├── PLAN.md                thesis plan + milestone tracking
-├── HPC.md                 HPC build / SLURM setup
 ├── ARCHITECTURE.md        ← you are here
 ├── LICENSE                MIT
-├── CMakeLists.txt         build system (HPC-ready)
+├── CMakeLists.txt         build system
 ├── pyproject.toml         scikit-build-core editable install
 ├── .gitignore             ignore build outputs and caches
 ├── .clangd                clangd config for IDEs
@@ -218,8 +217,31 @@ xoshiro picker. Reports steps/sec, ns/step, games/sec.
 
 ### `bench/bench_batched.cpp`
 Batched throughput. Same loop but over N envs at once. The fairest
-measure of the C++ core's ceiling on a given machine. With OpenMP on
-HPC this scales near-linearly with cores.
+measure of the C++ core's ceiling on a given machine. With OpenMP
+this scales near-linearly with cores.
+
+---
+
+## Simulator fuzz — `sim/`
+
+### `sim/fuzz_invariants.cpp`
+The 10⁷-game invariant correctness gate (PLAN.md §M1). Pure-C++,
+OpenMP-parallel: plays random-legal games and checks per-step invariants —
+resource conservation (bank + hands = 19/resource), hand-size vs resource sum,
+VP ≤ 12 & public ≤ total, settlement/city/road stock bounds (also catches
+uint8 underflow), phase/current_player ranges, non-empty mask, and a winner at
+any terminal. Mirrors the readable spec in `sim/tests/test_invariants.py` but
+runs the full sweep Python can't (~57k games/s vs ~35/core). CMake target;
+`ctest -R invariants` = 100k-game smoke, `build/fuzz_invariants <games>
+[base_seed] [max_steps]` = full gate. **Result: 0 violations over 10⁷ games /
+4.04×10¹⁰ steps.**
+
+Two rule-correct non-terminations exist (counted, never gate failures — every
+invariant still holds): heavy-tail long games, and **deadlocks** where the
+board is built out and the dev deck is exhausted so the last VP is unreachable
+for all players (max VP frozen < 10 forever). `step_one` has no no-progress
+terminal; resolved at the RL level by `models/env.py` `MAX_EPISODE_STEPS`
+(truncate → −1).
 
 ---
 
@@ -393,7 +415,7 @@ see exactly where wall time goes. Sections:
 - `ppo` — full SB3 MaskablePPO learn() loop
 - `cprofile` — function-level breakdown via cProfile
 
-Use this on HPC to decide whether to invest in a custom BatchedEnv-
+Use this to decide whether to invest in a custom BatchedEnv-
 driven PPO loop or stick with SB3.
 
 ### `tools/train_smoke.py`
@@ -465,13 +487,6 @@ The thesis-side roadmap. Five milestones (M1–M5) with dated
 deliverables, throughput targets, and risk register. Updated as
 work progresses.
 
-### `HPC.md`
-Linux/HPC build guide: module loads (GCC 14.2 + cmake 3.27 + python
-3.12 + CUDA 12.4), venv creation, `pip install`, the standalone
-bench targets, the RL training stack (`torch sb3-contrib stable-
-baselines3`), a SLURM job template, common pitfalls + fixes, and
-performance expectations per scale.
-
 ### `ARCHITECTURE.md`
 This file.
 
@@ -499,7 +514,6 @@ open them in an editor. Avoids spurious "include not found" diagnostics.
 7. **`tools/test_step1.py`** — example of how the engine is exercised
    from Python (via the ctypes shim — older but instructive).
 8. **`tools/train_smoke.py`** — the full training loop, end-to-end.
-9. **`HPC.md`** — what changes when you move from Mac/dev to HPC.
-10. **`PLAN.md`** — where the project is heading.
+9. **`PLAN.md`** — where the project is heading.
 
 Once you've read those, the rest of the repo should fit into context.
