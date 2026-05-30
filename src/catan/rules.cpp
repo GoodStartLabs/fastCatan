@@ -1275,6 +1275,15 @@ void step_one(GameState& s, const BoardLayout& b, uint32_t action,
             break;
     }
 
+    // Length backstop (single length authority): end a no-winner game once it
+    // hits MAX_TURNS turns. Falls into the ENDED block below, which finds no
+    // player >= WIN_VP so reward stays 0; Python _terminal_reward maps the
+    // no-winner terminal to TIE_REWARD (-2). The trade-compose cap guarantees
+    // turns end, so turn_count advances and this is reachable.
+    if (s.phase != Phase::ENDED && s.turn_count >= MAX_TURNS) {
+        s.phase = Phase::ENDED;
+    }
+
     if (s.phase == Phase::ENDED) {
         done = 1;
         // If this action triggered the terminal transition, the actor (the

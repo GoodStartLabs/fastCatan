@@ -45,6 +45,7 @@ from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
 
+from models.env import MAX_TRADE_COMPOSE_PER_TURN
 from models.selfplay.gate import gate_result, play_2v2
 from models.selfplay.league import League
 from models.selfplay.opponents import OpponentPool, PolicyOpponent
@@ -71,11 +72,13 @@ def _tb_dir_if_available(tb_dir: Path) -> str | None:
 
 
 def _build_vec_env(
-    pool: OpponentPool, num_envs: int, base_seed: int, suppress_p2p_trade: bool
+    pool: OpponentPool, num_envs: int, base_seed: int, suppress_p2p_trade: bool,
+    trade_compose_cap: int = MAX_TRADE_COMPOSE_PER_TURN,
 ) -> DummyVecEnv:
     def _make(seed: int):
         def _thunk():
-            e = SelfPlayEnv(pool, seed=seed, suppress_p2p_trade=suppress_p2p_trade)
+            e = SelfPlayEnv(pool, seed=seed, suppress_p2p_trade=suppress_p2p_trade,
+                            trade_compose_cap=trade_compose_cap)
             e = ActionMasker(e, _mask_fn)
             return Monitor(e)
 
@@ -100,6 +103,7 @@ _RESUME_KEYS = (
     "num_rounds", "steps_per_round", "num_envs",
     "lr", "lr_schedule", "ent_coef", "target_kl", "net_arch",
     "p_random", "pool_window", "opponent_device", "no_p2p_trade",
+    "trade_compose_cap",
     "gate_lag", "gate_games", "gate_threshold", "seed",
     "init_from", "seed_pool",
     "league", "league_size", "league_recent", "pfsp", "pfsp_beta", "league_decay",
@@ -180,6 +184,13 @@ def parse_args() -> argparse.Namespace:
                         "the trade-loop stall so self-play games terminate; without "
                         "it strong-vs-strong games stall to the cap and the gate is "
                         "inconclusive. See SelfPlayEnv / models/selfplay/PLAN.md.")
+    p.add_argument("--trade-compose-cap", type=int,
+                   default=MAX_TRADE_COMPOSE_PER_TURN,
+                   help="Per-seat trade-compose actions/turn before the compose "
+                        "block is masked, for learner AND opponents AND the gate. "
+                        "Lets trades stay ON without the ADD/CANCEL stall (keeps "
+                        "real trades, kills only churn). Lower = games terminate "
+                        "faster (more likely decidable within the step budget).")
     # PPO hyperparams (mirror models/train_ppo.py defaults)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--ent-coef", type=float, default=0.01)
@@ -288,7 +299,8 @@ def main() -> None:
             seats=[1, 2, 3], seed=args.seed,
             p_random=args.p_random, window=args.pool_window,
         )
-    env = _build_vec_env(pool, args.num_envs, args.seed, args.no_p2p_trade)
+    env = _build_vec_env(pool, args.num_envs, args.seed, args.no_p2p_trade,
+                         args.trade_compose_cap)
 
     if resume_snaps:
         if args.league:
@@ -418,7 +430,8 @@ def main() -> None:
                 device=args.opponent_device)
             latest_wins, decided, no_winner = play_2v2(
                 latest, nago, args.gate_games, seed=args.seed + rnd,
-                suppress_p2p=args.no_p2p_trade)
+                suppress_p2p=args.no_p2p_trade,
+                trade_compose_cap=args.trade_compose_cap)
             r = gate_result(latest_wins, decided, no_winner, args.gate_threshold)
             entry = {
                 "round": rnd, "timesteps": model.num_timesteps,
@@ -447,6 +460,7 @@ def main() -> None:
             "num_rounds": args.num_rounds, "num_envs": args.num_envs,
             "p_random": args.p_random, "pool_window": args.pool_window,
             "net_arch": args.net_arch,
+            "trade_compose_cap": args.trade_compose_cap,
             "gate_lag": args.gate_lag, "init_from": args.init_from,
         },
         "final_ckpt": str(final),

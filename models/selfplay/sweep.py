@@ -45,10 +45,22 @@ def parse_args() -> argparse.Namespace:
                    help="KL targets to sweep; 'none' = off, else a float like 0.03.")
     # shared run config (forwarded to every cell)
     p.add_argument("--init-from", type=str, default=None)
+    p.add_argument("--init-dir", type=str, default=None,
+                   help="Per-arch warm-start seeds: each cell loads "
+                        "{init_dir}/{arch_tag}/ppo_final.zip (arch_tag = arch with "
+                        "commas->dashes, e.g. 256-256). Use when sweeping --net-arch "
+                        "so each arch warm-starts from its OWN matching-arch seed "
+                        "(a single --init-from mismatches every non-default arch and "
+                        "cold-starts it). Falls back to --init-from if a seed is "
+                        "missing.")
     p.add_argument("--seed-pool", action="store_true")
     p.add_argument("--no-p2p-trade", action="store_true",
                    help="Forbid p2p trades (train+gate) so gates are conclusive; "
                         "without it self-play games stall and gates are undecidable.")
+    p.add_argument("--trade-compose-cap", type=int, default=None,
+                   help="Per-seat trade-compose cap/turn, forwarded to every cell. "
+                        "Lets trades stay ON without the stall (alternative to "
+                        "--no-p2p-trade). Omit = train_selfplay default (20).")
     p.add_argument("--num-rounds", type=int, default=8)
     p.add_argument("--num-envs", type=int, default=8)
     p.add_argument("--gate-lag", type=int, default=2)
@@ -94,19 +106,40 @@ def main() -> None:
         ]
         if kl != "none":
             cmd += ["--target-kl", kl]
-        if args.init_from:
-            cmd += ["--init-from", args.init_from]
+        cell_init = args.init_from
+        if args.init_dir:
+            cand = Path(args.init_dir) / arch_tag / "ppo_final.zip"
+            if cand.exists():
+                cell_init = str(cand)
+            else:
+                fallback = f"--init-from {args.init_from}" if args.init_from else "cold-start"
+                print(f"  [warn] no per-arch seed {cand} for arch {arch} -> {fallback}")
+        if cell_init:
+            cmd += ["--init-from", cell_init]
         if args.seed_pool:
             cmd += ["--seed-pool"]
         if args.no_p2p_trade:
             cmd += ["--no-p2p-trade"]
+        if args.trade_compose_cap is not None:
+            cmd += ["--trade-compose-cap", str(args.trade_compose_cap)]
 
         print(f"\n[sweep] cell {i + 1}/{len(grid)}: {run_name}")
         if args.dry_run:
             print("  " + " ".join(cmd))
             continue
 
-        subprocess.run(cmd, check=True)
+        try:
+            subprocess.run(cmd, check=True)
+        except subprocess.CalledProcessError as exc:
+            # Don't let one bad cell abort an unattended overnight sweep: log it,
+            # record an empty row, and carry on to the next cell.
+            print(f"  [error] cell FAILED (exit {exc.returncode}): {run_name}")
+            rows.append({
+                "lr": lr, "ent_coef": ent, "steps_per_round": interval,
+                "net_arch": arch, "lr_schedule": lrsched, "target_kl": kl,
+                "final_gate_rate": None, "pass": None, "run_name": run_name,
+            })
+            continue
 
         summary_path = (Path("models/checkpoints") / run_name / "summary.json")
         rate = pass_ = None

@@ -27,6 +27,12 @@ MASK_WORDS = fastcatan.MASK_WORDS
 LEARNER_SEAT = 0
 WIN_VP = 10
 
+# Terminal reward for a no-winner game (stall or tie). -2 is strictly worse than
+# a loss (-1) so the learner prefers losing to stalling and is pushed to actually
+# close games out -- the training-signal half of the stall fix (the mask cap above
+# is the other half). win=+1, loss=-1, no-winner=-2.
+TIE_REWARD = -2.0
+
 # --- Stall control -------------------------------------------------------
 # The dominant stall is a within-turn trade-compose loop: ADD_WANT is legal
 # whenever trade_want[r] < 19 and CANCEL whenever the scratch is non-empty
@@ -41,17 +47,70 @@ WIN_VP = 10
 # legal (CANCEL is the always-available escape from a pending trade, so the mask
 # can never be emptied; and without re-composing the loop can't restart). Bank
 # trades (TRADE_BASE) are excluded — they consume resources and self-limit.
-# 20 is well above any legitimate single-turn trade composition (a real offer is
-# a handful of ADD_* + OPEN) but far below the thousands seen in the stall.
+# This is the LIVENESS guard, NOT the length cap: a bounded compose budget forces
+# every turn to eventually build / bank-trade / END_TURN, so turn_count advances
+# and the C++ MAX_TURNS length cap (state.hpp) can fire. History: 20 was decidable
+# but suppressed real trading; 40 made the gate WORSE in a validation sweep (mean
+# 0.93 no-winner) — under a *step*-based length cap, a looser compose budget
+# inflates steps/turn and the step cap guillotines games before they reach the
+# ~300-900 turns needed to win. The fix was moving the length authority to TURNS
+# (C++ MAX_TURNS); with that, compose looseness no longer hurts decidability, so
+# the cap is 50 to preserve genuine multi-step trades.
 _A = fastcatan.action
 TRADE_COMPOSE_IDS = np.arange(_A.TRADE_ADD_GIVE_BASE, _A.TRADE_OPEN + 1, dtype=np.intp)
-MAX_TRADE_COMPOSE_PER_TURN = 20
+MAX_TRADE_COMPOSE_PER_TURN = 50
 
-# Backstop only: episode cap counted in *learner steps* (calls to step()), NOT
-# turn_count (frozen during the loop above). With the trade-compose cap in place
-# this should rarely fire; it guards any residual non-terminating policy. A
-# random-policy learner finishes in <=~2100 steps (40-game sample, max 2088).
-MAX_EPISODE_STEPS = 3000
+# Demoted to a should-never-fire backstop: the C++ MAX_TURNS cap (state.hpp) is now
+# the single length authority. Counted in *learner steps* (calls to step()). A
+# MAX_TURNS-turn game gives the learner ~MAX_TURNS/NUM_PLAYERS turns x <=~60 actions
+# (50 compose + a few) ~= 30k learner steps worst case, so 40000 sits just above the
+# turn cap's worst case — the turn cap always terminates first; this only guards a
+# hypothetical frozen-turn_count bug. No-winner here still costs TIE_REWARD (-2).
+# (random-policy learner finishes <=~2100 steps.)
+MAX_EPISODE_STEPS = 40000
+
+
+class ComposeCapper:
+    """Per-seat trade-compose cap for the raw-env drive loops.
+
+    FastCatanEnv caps the *learner's* compose churn in action_masks() (via
+    self._compose_count). But the self-play opponent loop
+    (selfplay_env._step_opponents) and the gate/eval driver (eval_seats.play_one)
+    step ALL four seats through a bare fastcatan.Env with no FastCatanEnv wrapper,
+    so they get no cap — and a frozen opponent that churns ADD_WANT->CANCEL never
+    ends its turn, stalling the whole game to no-winner. This applies the SAME cap
+    keyed by seat: reset a seat's budget on its ROLL/END_TURN, count its compose
+    actions (ADD_GIVE_BASE..TRADE_OPEN), and once it spends `cap` of them mask the
+    compose block off (CANCEL/build/END_TURN stay legal, so the mask is never
+    emptied and, without re-composing, the churn can't restart). A legitimate
+    offer is a handful of ADD_* + OPEN, so only churn ever reaches the cap.
+    """
+
+    def __init__(self, cap: int = MAX_TRADE_COMPOSE_PER_TURN):
+        self.cap = cap
+        self._count = [0] * fastcatan.NUM_PLAYERS
+
+    def reset(self) -> None:
+        """Clear every seat's budget — call once per game (each env.reset)."""
+        self._count = [0] * fastcatan.NUM_PLAYERS
+
+    def filter(self, seat: int, mask_bool: np.ndarray) -> np.ndarray:
+        """Gate the compose block for `seat` once it has spent its budget.
+        Never returns an all-False mask (falls back to the unfiltered one)."""
+        if self._count[seat] >= self.cap:
+            gated = mask_bool.copy()
+            gated[TRADE_COMPOSE_IDS] = False
+            if gated.any():
+                return gated
+        return mask_bool
+
+    def update(self, seat: int, action: int) -> None:
+        """Account `seat`'s chosen action: reset on its turn boundary, else count
+        compose actions. Mirrors FastCatanEnv.step's learner-side bookkeeping."""
+        if action == _A.ROLL_DICE or action == _A.END_TURN:
+            self._count[seat] = 0
+        elif _A.TRADE_ADD_GIVE_BASE <= action <= _A.TRADE_OPEN:
+            self._count[seat] += 1
 
 
 def _unpack_mask(mask_words: np.ndarray) -> np.ndarray:
@@ -88,9 +147,11 @@ class FastCatanEnv(gym.Env):
 
     metadata = {"render_modes": []}
 
-    def __init__(self, seed: int = 0):
+    def __init__(self, seed: int = 0,
+                 trade_compose_cap: int = MAX_TRADE_COMPOSE_PER_TURN):
         super().__init__()
         self._env = fastcatan.Env()
+        self._compose_cap = trade_compose_cap
         self._seed_seq = random.Random(seed)
         self._rng = random.Random(seed ^ 0xC0FFEE)
         self._obs_buf = np.zeros(OBS_SIZE, dtype=np.float32)
@@ -117,8 +178,10 @@ class FastCatanEnv(gym.Env):
         for p in range(fastcatan.NUM_PLAYERS):
             if self._env.player_vp(p) >= WIN_VP:
                 return 1.0 if p == LEARNER_SEAT else -1.0
-        # No winner (tie / no-winner terminal): treat as loss.
-        return -1.0
+        # No winner (tie / no-winner terminal): penalize harder than a loss (-2 vs
+        # -1) so the learner treats stalling as strictly worse than losing and
+        # learns to close games out. See TIE_REWARD note above.
+        return TIE_REWARD
 
     def _step_opponents(self) -> tuple[bool, float]:
         """Advance the sim until current_player == LEARNER_SEAT or terminal.
@@ -180,8 +243,9 @@ class FastCatanEnv(gym.Env):
             return self._read_obs(), term_r, True, False, {}
 
         if self._ep_steps >= MAX_EPISODE_STEPS:
-            # Stalled game (no winner): treat as terminal loss, no bootstrap.
-            return self._read_obs(), -1.0, True, False, {}
+            # Stalled game (no winner): terminal, no bootstrap. -2 (TIE_REWARD),
+            # strictly worse than a loss, to push the learner to close out.
+            return self._read_obs(), TIE_REWARD, True, False, {}
 
         return self._read_obs(), 0.0, False, False, {}
 
@@ -189,7 +253,7 @@ class FastCatanEnv(gym.Env):
 
     def action_masks(self) -> np.ndarray:
         mask = _unpack_mask(self._read_mask())
-        if self._compose_count >= MAX_TRADE_COMPOSE_PER_TURN:
+        if self._compose_count >= self._compose_cap:
             gated = mask.copy()
             gated[TRADE_COMPOSE_IDS] = False
             # Only apply if a non-trade alternative remains, so we never hand

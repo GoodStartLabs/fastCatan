@@ -13,6 +13,15 @@ namespace catan {
     inline constexpr uint8_t NUM_PLAYERS   = 4;
     inline constexpr uint8_t WIN_VP        = 10;
 
+    // Length backstop: end any game that reaches MAX_TURNS turns with no winner
+    // (turn_count is uint16_t, ++ per END_TURN at rules.cpp). This is the single
+    // length authority for the game; the per-turn trade-compose cap (Python
+    // ComposeCapper / FastCatanEnv) is the liveness guard that guarantees turns
+    // end, so this always fires for a non-terminating game. 2000 ~= 2x the
+    // observed random-game max of 945 turns -> ample headroom for longer
+    // strong-vs-strong self-play, so it only bites genuine non-termination.
+    inline constexpr uint16_t MAX_TURNS    = 2000;
+
     // node[] encoding: bits 0-1 = level, bits 2-4 = owner.
     inline constexpr uint8_t NODE_EMPTY      = 0;
     inline constexpr uint8_t NODE_SETTLEMENT = 1;

@@ -226,11 +226,37 @@ Findings:
       free per-opponent stats from rollouts, `--league-decay`, resume via
       `league_state.json`. Logic unit-tested (eviction, dedup crediting, PFSP-hard
       sampling, decay, state round-trip). **NOT yet run at scale.**
-- [~] run the sweep — **IN PROGRESS 2026-05-28**: running now, warm-started from
-      the verified 1084 seed `models/checkpoints/ppo_1084_50m/ppo_final.zip` via
-      `--init-from` (running from scratch is a poor M3 test — M2 took ~15–20M just
-      to beat random).
-- [ ] decide stall fix long-term: keep `--no-p2p-trade` vs C++ TRADE_OPEN cap
-      (the thesis wants trading intact → prefer the C++ cap before final runs).
+- [x] ran the 12-cell arch sweep (2026-05-28, per-arch seeds via `--init-dir`,
+      `--trade-compose-cap 20`) → `checkpoints/arch_sweep/sweep_results.{md,csv}`.
+      **Verdict: inconclusive, not a clean win.** Win-shares where decided were
+      strong (0.65–0.84 → the learner IS beating its past selves), but the 2v2
+      gate stalled **50% no-winner (128-128) to 85% (256-256)**, so only 1/12
+      cells (128-128/ent0.01/constant, share 0.70) squeaked past the 50%-decided
+      conclusive bar. cap=20 is NOT enough at this scale (see [[selfplay-trade-cap-fixed]]).
+- [x] decided stall fix (2026-05-29): **training-signal + relaxed cap**, not
+      `--no-p2p-trade` and not (yet) the C++ cap. `TIE_REWARD=-2` (no-winner now
+      strictly worse than a loss → learner pushed to close out), `MAX_TRADE_
+      COMPOSE_PER_TURN` 20→40, `MAX_EPISODE_STEPS` 3000→4000, gate/eval max-steps
+      4000→5000. The mask cap is now a backstop; the reward is the primary lever.
+- [x] re-ran the sweep with cap40/-2/step-caps (2026-05-29) → **FAILED, worse**:
+      mean 0.93 no-winner, 0/12 conclusive (vs 1/12 at cap20). Loosening the
+      compose cap, not the reward, was the cause: trade-steps inflate steps/turn so
+      the *learner-step* length cap guillotines games before they reach the
+      ~300-900 turns needed to win (random wins by turn 945). Archived
+      `sweep_results_cap40_tie-2.*` vs `_cap20_tie-1.*`.
+- [x] **fixed: length now bounded by TURNS, not steps** (2026-05-29). C++
+      `MAX_TURNS=2000` length cap (state.hpp / rules.cpp `step_one`), compose cap
+      40→50, python step caps demoted to backstops (MAX_EPISODE_STEPS 40000,
+      gate/eval max-steps 150000). Smoke on the worst cap40/-2 ckpts: **0%
+      no-winner on all cells** (was 79-100%), all decided; the turn cap never fired
+      (games end 173-595 turns) — the step cap (5000) was guillotining trade-heavy
+      games that need 7k-61k steps. Details in memory `cap-simplification-plan`.
+- [x] **reran the full 12-cell sweep on the fixed env** (2026-05-30,
+      cap50+turn-cap) → `sweep_results_cap50_turncap.*`. **Decidability perfect:
+      12/12 conclusive, 0.000 no-winner across every cell AND round.** Real
+      learning gradient: **6/12 cells PASS (>0.55)** — M3 gate MET with trades ON.
+      Best: 256,256 ent0.01 constant **0.825**, then 256,256 ent0.01 linear 0.765,
+      128,128 ent0.01 linear 0.755. Pattern: ent0.01 >> ent0 (all top-3 are
+      ent0.01; ent0 collapses, esp. on 256,256); 64,64 weakest (1/4 pass).
 - **artifacts:** smoke ckpts in `checkpoints/sp_smoke_{1m,5m}/` (~16 MB, untracked —
   `checkpoints/` has no .gitignore rule yet; scratch, safe to delete).
