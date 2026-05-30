@@ -1,0 +1,13 @@
+lr,ent_coef,steps_per_round,net_arch,lr_schedule,target_kl,final_gate_rate,pass,run_name
+0.0003,0.0,1000000,"64,64",constant,none,0.555,True,sweep/lr0.0003_ent0_int1000000_arch64-64_constant_klnone
+0.0003,0.0,1000000,"64,64",linear,none,0.525,False,sweep/lr0.0003_ent0_int1000000_arch64-64_linear_klnone
+0.0003,0.0,1000000,"128,128",constant,none,0.44,False,sweep/lr0.0003_ent0_int1000000_arch128-128_constant_klnone
+0.0003,0.0,1000000,"128,128",linear,none,0.675,True,sweep/lr0.0003_ent0_int1000000_arch128-128_linear_klnone
+0.0003,0.0,1000000,"256,256",constant,none,0.47,False,sweep/lr0.0003_ent0_int1000000_arch256-256_constant_klnone
+0.0003,0.0,1000000,"256,256",linear,none,0.47,False,sweep/lr0.0003_ent0_int1000000_arch256-256_linear_klnone
+0.0003,0.01,1000000,"64,64",constant,none,0.47,False,sweep/lr0.0003_ent0.01_int1000000_arch64-64_constant_klnone
+0.0003,0.01,1000000,"64,64",linear,none,0.54,False,sweep/lr0.0003_ent0.01_int1000000_arch64-64_linear_klnone
+0.0003,0.01,1000000,"128,128",constant,none,0.565,True,sweep/lr0.0003_ent0.01_int1000000_arch128-128_constant_klnone
+0.0003,0.01,1000000,"128,128",linear,none,0.755,True,sweep/lr0.0003_ent0.01_int1000000_arch128-128_linear_klnone
+0.0003,0.01,1000000,"256,256",constant,none,0.825,True,sweep/lr0.0003_ent0.01_int1000000_arch256-256_constant_klnone
+0.0003,0.01,1000000,"256,256",linear,none,0.765,True,sweep/lr0.0003_ent0.01_int1000000_arch256-256_linear_klnone
