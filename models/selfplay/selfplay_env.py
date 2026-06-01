@@ -48,11 +48,11 @@ class SelfPlayEnv(FastCatanEnv):
 
     `suppress_p2p_trade`: AND-NOT the player-to-player trade actions out of every
     seat's mask (learner AND opponents, so the trade sub-phase is never entered).
-    This kills the TRADE_OPEN/CANCEL stall (root PLAN.md) at the Python mask layer
-    — without it, self-play between strong policies stalls to the step cap and the
-    gate is undecidable (no winner). Apply it consistently in train AND gate, or
-    not at all: a policy trained with it on faces a different game than one without.
-    The clean long-term fix is the C++ mask cap on TRADE_OPEN re-opens (open M2 item)."""
+    Optional, default off — the C++ compose cap (MAX_TRADE_COMPOSE_PER_TURN,
+    state.hpp) already guarantees turns end, so this is no longer needed for
+    liveness; it's the stronger ablation that removes p2p trading entirely. Apply
+    it consistently in train AND gate, or not at all: a policy trained with it on
+    faces a different game than one without."""
 
     def __init__(
         self, pool: OpponentPool, seed: int = 0, suppress_p2p_trade: bool = False,

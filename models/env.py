@@ -27,34 +27,17 @@ MASK_WORDS = fastcatan.MASK_WORDS
 LEARNER_SEAT = 0
 WIN_VP = 10
 
-# Terminal reward for a no-winner game (stall or tie). -2 is strictly worse than
-# a loss (-1) so the learner prefers losing to stalling and is pushed to actually
-# close games out -- the training-signal half of the stall fix (the mask cap above
-# is the other half). win=+1, loss=-1, no-winner=-2.
+# Terminal reward for a no-winner game (stall or tie): -2, strictly worse than a
+# loss (-1), so the learner prefers losing to stalling and is pushed to close games
+# out. win=+1, loss=-1, no-winner=-2. This is the training-signal half of the stall
+# fix; the liveness half is the C++ compose cap (MAX_TRADE_COMPOSE_PER_TURN,
+# state.hpp), which guarantees turns end.
 TIE_REWARD = -2.0
 
-# --- Stall control -------------------------------------------------------
-# The dominant within-turn stall is the trade-compose loop: ADD_WANT is legal
-# whenever trade_want[r] < 19 and CANCEL whenever the scratch is non-empty, so
-# ADD_WANT -> CANCEL -> ADD_WANT churns forever WITHOUT ever opening a trade or
-# ending the turn (turn_count only advances on END_TURN, so it stays frozen and a
-# turn_count cap never fires).
-#
-# This LIVENESS guard now lives in the C++ core (catan::MAX_TRADE_COMPOSE_PER_TURN,
-# state.hpp): after that many compose actions in a turn, compute_mask masks the
-# compose block off (CANCEL/build/bank-trade/END_TURN stay legal), forcing the
-# turn to progress so turn_count advances and the C++ MAX_TURNS length cap can
-# fire. The simulator applies it uniformly to every seat, so train, self-play
-# opponents, gate and eval all get it for free with no per-driver bookkeeping.
-# (Was the Python ComposeCapper; removed once moved into the sim.)
-
-# Demoted to a should-never-fire backstop: the C++ MAX_TURNS cap (state.hpp) is now
-# the single length authority. Counted in *learner steps* (calls to step()). A
-# MAX_TURNS-turn game gives the learner ~MAX_TURNS/NUM_PLAYERS turns x <=~60 actions
-# (50 compose + a few) ~= 30k learner steps worst case, so 40000 sits just above the
-# turn cap's worst case — the turn cap always terminates first; this only guards a
-# hypothetical frozen-turn_count bug. No-winner here still costs TIE_REWARD (-2).
-# (random-policy learner finishes <=~2100 steps.)
+# Backstop episode length, counted in learner step() calls. The C++ MAX_TURNS cap
+# (state.hpp) is the single length authority and always terminates first (worst
+# case ~30k learner steps < 40000); this only guards a hypothetical frozen
+# turn_count. No-winner here still costs TIE_REWARD. (Random learner ends <=~2100.)
 MAX_EPISODE_STEPS = 40000
 
 
@@ -168,9 +151,6 @@ class FastCatanEnv(gym.Env):
     ) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         action = int(action)
         self._ep_steps += 1
-        # The per-turn trade-compose cap (liveness guard) is enforced by the C++
-        # core's mask (catan::MAX_TRADE_COMPOSE_PER_TURN), so no Python bookkeeping
-        # is needed here.
         _, done = self._env.step(action)
         if done:
             return self._read_obs(), self._terminal_reward(), True, False, {}
@@ -189,8 +169,7 @@ class FastCatanEnv(gym.Env):
     # --- MaskablePPO hook ---
 
     def action_masks(self) -> np.ndarray:
-        # The compose cap is baked into the C++ mask, so this is a straight
-        # read of the legal-action mask — no Python-side gating.
+        # Straight mask read; the compose cap is baked into the C++ mask (state.hpp).
         return _unpack_mask(self._read_mask())
 
 

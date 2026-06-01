@@ -1,0 +1,50 @@
+{
+  "experiment": "3xPPO_vs_1xAlphaBeta",
+  "timestamp": "2026-06-01T13:06:50",
+  "ckpt": "models/checkpoints/sp_league_200m_512/selfplay_final.zip",
+  "algo": "ppo",
+  "deterministic": false,
+  "enable_trades": true,
+  "rotate_ab_seat": true,
+  "ab_depth": 2,
+  "ab_prune": true,
+  "seed": 42,
+  "pythonhashseed": "0",
+  "games": 5,
+  "decided": 5,
+  "no_winner": 0,
+  "ab_wins": 5,
+  "ab_win_rate": 1.0,
+  "ab_ci95": [
+    0.5655085052479191,
+    1.0000000000000002
+  ],
+  "ppo_wins": 0,
+  "ppo_win_rate": 0.0,
+  "ppo_ci95": [
+    -2.7755575615628914e-17,
+    0.43449149475208104
+  ],
+  "ppo_per_agent_rate": 0.0,
+  "fair_share": 0.25,
+  "seat_wins": {
+    "RED": 2,
+    "BLUE": 1,
+    "ORANGE": 1,
+    "WHITE": 1
+  },
+  "ab_seat_wins": {
+    "RED": 2,
+    "BLUE": 1,
+    "ORANGE": 1,
+    "WHITE": 1
+  },
+  "ab_seat_games": {
+    "RED": 2,
+    "BLUE": 1,
+    "ORANGE": 1,
+    "WHITE": 1
+  },
+  "elapsed_s": 4.858528458978981,
+  "s_per_game": 0.9717056917957961
+}

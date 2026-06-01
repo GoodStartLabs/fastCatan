@@ -19,6 +19,7 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
 from models.env import FastCatanEnv
+from models.env_shaped import VPShapedEnv
 
 
 CKPT_DIR = Path(__file__).resolve().parent / "checkpoints"
@@ -28,9 +29,15 @@ def _mask_fn(env):
     return env.action_masks()
 
 
-def _make_env(seed: int):
+def _make_env(seed: int, shaped: bool, shaping_coef: float, gamma: float):
     def _thunk():
-        e = FastCatanEnv(seed=seed)
+        # VP-only potential shaping (models/env_shaped.py) when --shaped; its
+        # gamma must match the PPO gamma so the shaping discount matches the
+        # learner's return. Else the bare sparse-terminal env.
+        if shaped:
+            e = VPShapedEnv(seed=seed, shaping_coef=shaping_coef, gamma=gamma)
+        else:
+            e = FastCatanEnv(seed=seed)
         e = ActionMasker(e, _mask_fn)
         # Monitor records episode reward/length so SB3 logs rollout/ep_rew_mean
         # and ep_len_mean — without it you cannot see whether the agent learns
@@ -40,8 +47,12 @@ def _make_env(seed: int):
     return _thunk
 
 
-def _build_vec_env(num_envs: int, base_seed: int, use_subproc: bool):
-    fns = [_make_env(base_seed + i) for i in range(num_envs)]
+def _build_vec_env(
+    num_envs: int, base_seed: int, use_subproc: bool,
+    shaped: bool, shaping_coef: float, gamma: float,
+):
+    fns = [_make_env(base_seed + i, shaped, shaping_coef, gamma)
+           for i in range(num_envs)]
     if use_subproc and num_envs > 1:
         return SubprocVecEnv(fns)
     return DummyVecEnv(fns)
@@ -74,6 +85,17 @@ def main() -> None:
                    help="Use SubprocVecEnv (multi-process). Default is DummyVecEnv: "
                         "the C++ sim is cheap enough (~50 ns/step) that per-step "
                         "cross-process obs pickling usually costs more than the step.")
+    p.add_argument("--shaped", action="store_true",
+                   help="Use VPShapedEnv (models/env_shaped.py): VP-only potential "
+                        "shaping on top of the sparse +1/-1/-2 terminal. gamma is "
+                        "shared with the learner.")
+    p.add_argument("--shaping-coef", type=float, default=0.1,
+                   help="Potential coefficient phi=coef*own_VP (only with --shaped).")
+    p.add_argument("--init-from", type=str, default=None,
+                   help="Warm-start weights from a checkpoint (set_parameters, weights "
+                        "only — keeps the CLI lr/ent_coef). --net-arch MUST match the "
+                        "checkpoint or set_parameters fails -> falls back to scratch "
+                        "(logged). E.g. the 50M base is [512,512,256].")
     args = p.parse_args()
 
     save_dir = Path(args.save_dir) / args.run_name
@@ -85,7 +107,10 @@ def main() -> None:
     # existing checkpoints stay architecturally identical.
     net_arch = [int(x) for x in args.net_arch.split(",") if x.strip()]
 
-    env = _build_vec_env(args.num_envs, args.seed, use_subproc=args.subproc)
+    env = _build_vec_env(
+        args.num_envs, args.seed, use_subproc=args.subproc,
+        shaped=args.shaped, shaping_coef=args.shaping_coef, gamma=args.gamma,
+    )
 
     model = MaskablePPO(
         MaskableActorCriticPolicy,
@@ -103,8 +128,21 @@ def main() -> None:
         tensorboard_log=str(tb_dir),
         verbose=1,
     )
+    if args.init_from:
+        # Weights only — keeps the CLI lr/ent_coef. Arch must match the ckpt;
+        # a mismatch raises -> log and fall through to scratch (mirrors the
+        # self-play warm-start in models/selfplay/train_selfplay.py).
+        try:
+            model.set_parameters(args.init_from, device=model.device)
+            print(f"[train] warm-started weights from {args.init_from}")
+        except (ValueError, RuntimeError, KeyError) as e:
+            print(f"[train] WARM-START SKIPPED (arch mismatch with "
+                  f"{args.init_from}? net_arch={net_arch}): "
+                  f"{type(e).__name__}: {str(e)[:140]} -> training from scratch")
+
     print(f"[train] run={args.run_name} net_arch={net_arch} "
-          f"num_envs={args.num_envs} total_steps={args.total_steps} lr={args.lr}")
+          f"num_envs={args.num_envs} total_steps={args.total_steps} lr={args.lr} "
+          f"shaped={args.shaped} coef={args.shaping_coef if args.shaped else None}")
 
     ckpt_cb = CheckpointCallback(
         save_freq=max(1, args.save_freq // args.num_envs),

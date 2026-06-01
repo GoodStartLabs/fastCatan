@@ -1,0 +1,70 @@
+{
+  "experiment": "3xPPO_vs_1xAlphaBeta",
+  "timestamp": "2026-06-01T13:16:04",
+  "ckpt": "models/checkpoints/ppo_512x512x256_50m/ppo_final.zip",
+  "algo": "ppo",
+  "deterministic": false,
+  "enable_trades": true,
+  "rotate_ab_seat": true,
+  "ab_depth": 2,
+  "ab_prune": true,
+  "seed": 42,
+  "pythonhashseed": "0",
+  "games": 120,
+  "decided": 120,
+  "no_winner": 0,
+  "ab_wins": 113,
+  "ab_win_rate": 0.9416666666666667,
+  "ab_ci95": [
+    0.8844727405319686,
+    0.9714593533686271
+  ],
+  "ppo_wins": 7,
+  "ppo_win_rate": 0.058333333333333334,
+  "ppo_ci95": [
+    0.02854064663137293,
+    0.1155272594680315
+  ],
+  "ppo_per_agent_rate": 0.019444444444444445,
+  "fair_share": 0.25,
+  "seat_wins": {
+    "RED": 30,
+    "BLUE": 27,
+    "ORANGE": 31,
+    "WHITE": 32
+  },
+  "ab_seat_wins": {
+    "RED": 29,
+    "BLUE": 26,
+    "ORANGE": 29,
+    "WHITE": 29
+  },
+  "ab_seat_games": {
+    "RED": 30,
+    "BLUE": 30,
+    "ORANGE": 30,
+    "WHITE": 30
+  },
+  "trades_total": {
+    "offers": 291,
+    "confirms": 81,
+    "accepts": 123,
+    "rejects": 986,
+    "cancels": 20,
+    "maritime": 3414,
+    "ab_accepts": 0,
+    "maritime_ab": 1154
+  },
+  "trades_per_game": {
+    "offers": 2.425,
+    "confirms": 0.675,
+    "accepts": 1.025,
+    "rejects": 8.216666666666667,
+    "cancels": 0.16666666666666666,
+    "maritime": 28.45,
+    "ab_accepts": 0.0,
+    "maritime_ab": 9.616666666666667
+  },
+  "elapsed_s": 52.471905249985866,
+  "s_per_game": 0.43726587708321557
+}

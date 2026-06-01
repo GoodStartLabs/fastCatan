@@ -15,19 +15,25 @@ namespace catan {
 
     // Length backstop: end any game that reaches MAX_TURNS turns with no winner
     // (turn_count is uint16_t, ++ per END_TURN at rules.cpp). This is the single
-    // length authority for the game; the per-turn trade-compose cap (Python
-    // ComposeCapper / FastCatanEnv) is the liveness guard that guarantees turns
-    // end, so this always fires for a non-terminating game. 2000 ~= 2x the
-    // observed random-game max of 945 turns -> ample headroom for longer
-    // strong-vs-strong self-play, so it only bites genuine non-termination.
+    // length authority for the game; the per-turn trade-compose cap below is the
+    // liveness guard that guarantees turns end, so this always fires for a
+    // non-terminating game. 2000 ~= 2x the observed random-game max of 945 turns
+    // -> ample headroom for longer strong-vs-strong self-play, so it only bites
+    // genuine non-termination.
     inline constexpr uint16_t MAX_TURNS    = 2000;
 
-    // Per-turn player-to-player trade-compose budget. After this many
-    // compose actions (TRADE_ADD_GIVE..TRADE_OPEN) in one turn, compute_mask
-    // masks the compose block off (CANCEL/build/bank-trade/END_TURN stay
-    // legal), forcing the turn to progress. Kills the ADD->CANCEL churn stall
-    // in the simulator itself (was the Python ComposeCapper). A real offer is
-    // a few ADD_* + OPEN, so only churn ever reaches this.
+    // Per-turn player-to-player trade-compose budget -- canonical home for the
+    // trade-stall fix (Python/eval comments point here). The dominant stall is a
+    // within-turn churn: ADD_WANT is legal while trade_want[r] < 19 and CANCEL
+    // while the scratch is non-empty, so ADD_WANT -> CANCEL -> ADD_WANT loops
+    // forever without opening a trade or ending the turn -- turn_count (bumped
+    // only on END_TURN) freezes, so MAX_TURNS never fires. After this many compose
+    // actions (TRADE_ADD_GIVE..TRADE_OPEN) in one turn, compute_mask masks the
+    // compose block off (CANCEL/build/bank-trade/END_TURN stay legal, so the mask
+    // is never emptied), forcing the turn to progress so turn_count advances and
+    // MAX_TURNS can fire. Applied uniformly to every seat by the simulator, so
+    // train, self-play, gate and eval inherit it with no per-driver bookkeeping.
+    // A real offer is a few ADD_* + OPEN, so only churn ever reaches this.
     inline constexpr uint8_t MAX_TRADE_COMPOSE_PER_TURN = 50;
 
     // node[] encoding: bits 0-1 = level, bits 2-4 = owner.

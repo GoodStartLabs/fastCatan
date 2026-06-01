@@ -1263,11 +1263,8 @@ void step_one(GameState& s, const BoardLayout& b, uint32_t action,
     Phase phase_before = s.phase;
     uint8_t actor = s.current_player;
 
-    // Per-turn p2p trade-compose budget (LIVENESS guard, moved from the Python
-    // ComposeCapper): reset at turn boundaries (ROLL starts the action phase,
-    // END_TURN closes it), count compose actions otherwise. recompute_full masks
-    // the compose block once this hits MAX_TRADE_COMPOSE_PER_TURN, forcing the
-    // turn forward so an ADD->CANCEL churn can't stall the game to no-winner.
+    // Per-turn trade-compose budget (see MAX_TRADE_COMPOSE_PER_TURN, state.hpp):
+    // reset on ROLL/END_TURN, count compose actions otherwise.
     if (action == action::ROLL_DICE || action == action::END_TURN) {
         s.trade_compose_count = 0;
     } else if (action >= action::TRADE_ADD_GIVE_BASE
@@ -1504,9 +1501,8 @@ static inline void recompute_full(const GameState& s,
         }
     }
 
-    // Player-to-player trade compose actions. Gated by the per-turn compose
-    // budget (TRADE_ADD_GIVE..TRADE_OPEN); CANCEL below stays legal so the mask is
-    // never emptied and, without re-composing, the churn can't restart.
+    // Player-to-player trade compose actions, gated by the per-turn budget
+    // (see MAX_TRADE_COMPOSE_PER_TURN, state.hpp); CANCEL below stays legal.
     bool compose_ok = s.trade_compose_count < MAX_TRADE_COMPOSE_PER_TURN;
     if (compose_ok) {
         for (uint8_t r = 0; r < NUM_RESOURCES; ++r) {

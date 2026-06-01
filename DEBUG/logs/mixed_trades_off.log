@@ -1,0 +1,18 @@
+[20/120] AB 20 wins (1.000 of 20 decided), PPO 0  0.57s/game
+[40/120] AB 40 wins (1.000 of 40 decided), PPO 0  0.57s/game
+[60/120] AB 60 wins (1.000 of 60 decided), PPO 0  0.54s/game
+[80/120] AB 80 wins (1.000 of 80 decided), PPO 0  0.54s/game
+[100/120] AB 100 wins (1.000 of 100 decided), PPO 0  0.54s/game
+[120/120] AB 120 wins (1.000 of 120 decided), PPO 0  0.52s/game
+
+=== mixed table: 3x PPO (trades=off) vs 1x AlphaBeta(d2,prune) ===
+ckpt:           models/checkpoints/sp_league_200m_512/selfplay_final.zip
+games:          120/120 decided (no-winner: 0)
+AlphaBeta:      120 wins   rate 1.0000  95% CI [0.9690, 1.0000]   (fair share = 0.25)
+PPO (all 3):    0 wins   rate 0.0000  95% CI [-0.0000, 0.0310]
+PPO per agent:  0.0000   (vs fair 0.25)
+seat wins:      {'RED': 30, 'BLUE': 30, 'ORANGE': 30, 'WHITE': 30}
+AB by seat:     RED:30/30, BLUE:30/30, ORANGE:30/30, WHITE:30/30
+verdict:        AlphaBeta ABOVE fair share — still strong outnumbered
+time:           62.7s  (0.52s/game)
+saved -> EVAL/AB/results/mixed_3ppo_1ab_20260601_130934.json
