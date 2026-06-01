@@ -54,10 +54,10 @@ import time
 import warnings
 from pathlib import Path
 
-_HERE = Path(__file__).resolve().parent
-_ROOT = _HERE.parent
-sys.path.insert(0, str(_HERE))           # for bench_comprehensive
-sys.path.insert(0, str(_ROOT))           # for bridge.*
+_HERE = Path(__file__).resolve().parent       # DEBUG/bench
+_ROOT = _HERE.parents[1]                        # repo root
+sys.path.insert(0, str(_HERE))               # for bench_comprehensive
+sys.path.insert(0, str(_ROOT / "EVAL"))      # for bridge.* (moved under EVAL/)
 sys.path.insert(0, str(_ROOT / "examples"))  # for player_base / random_player
 
 import numpy as np

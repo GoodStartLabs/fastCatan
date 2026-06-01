@@ -288,7 +288,7 @@ def dump_frames(game: GameLog, out_dir: Path, *, pov: Optional[int],
 
 def _main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(description="Replay a recorded fastcatan game.")
-    p.add_argument("log", help="path to .jsonl.gz log")
+    p.add_argument("log", help="path to .jsonl.gz log (bare name resolves against DEBUG/logs/)")
     p.add_argument("--start", type=int, default=0, help="seek to this step")
     p.add_argument("--end", type=int, default=None,
                    help="(--out only) last step to render")
@@ -305,7 +305,13 @@ def _main(argv: list[str]) -> int:
                    help="draw node/edge/hex IDs")
     args = p.parse_args(argv)
 
-    game = read_log(args.log)
+    log_path = Path(args.log)
+    if not log_path.exists():
+        # drag-drop convenience: a bare filename resolves against the drop folder
+        drop = Path(__file__).resolve().parents[1] / "logs" / args.log
+        if drop.exists():
+            log_path = drop
+    game = read_log(str(log_path))
     if not game.steps:
         print("log has no steps", file=sys.stderr)
         return 1

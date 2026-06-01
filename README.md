@@ -13,7 +13,7 @@ stepping with optional OpenMP, Gymnasium + PettingZoo wrappers.
 
 ## Throughput
 
-Measured with `bench/bench_throughput.py` (full per-component breakdown in
+Measured with `DEBUG/bench/bench_throughput.py` (full per-component breakdown in
 PLAN.md M1). Single node:
 
 | Path | Steps/sec |
@@ -61,7 +61,7 @@ Run the correctness gates (after `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 ```bash
 ctest --test-dir build -R invariants            # 100k-game invariant fuzz smoke (~2s)
 build/fuzz_invariants 10000000                  # full 10⁷-game gate (~3 min, OpenMP)
-python3 -m pytest sim/tests/ EVAL/bridge/tests/ -q   # unit + cross-engine differential
+python3 -m pytest tests/ EVAL/bridge/tests/ -q   # unit + cross-engine differential
 ```
 
 M1 gate result: 0 invariant violations over 10⁷ games / 4.04×10¹⁰ steps (see PLAN.md §M1).
@@ -212,7 +212,7 @@ wrapper / training loop.
 
 xoshiro128++ per env, 16 bytes of state, seeded via SplitMix64 from a
 master seed. Deterministic given the seed; fixed-seed reproducibility is
-guarded by `sim/tests/test_determinism.py`.
+guarded by `tests/test_determinism.py`.
 
 ## Repo layout
 
@@ -221,13 +221,13 @@ include/                 public headers (state, rules, mask, obs, batched_env, r
 src/catan/               core C++ implementation
 bindings/pycatan/        nanobind module
 python/fastcatan/        Python package (re-exports + Gym/PettingZoo wrappers)
-sim/tests/               Python correctness tests (invariants, scenarios, determinism, mask)
-sim/fuzz_invariants.cpp  10⁷-game C++ invariant fuzz gate (ctest -R invariants; see PLAN.md M1)
+tests/                   Python correctness tests (invariants, scenarios, determinism, mask)
+tests/fuzz_invariants.cpp  10⁷-game C++ invariant fuzz gate (ctest -R invariants; see PLAN.md M1)
 EVAL/bridge/                  Catanatron interop + cross-engine differential (see EVAL/bridge/PLAN.md)
 models/                  RL trainers (PPO + A2C/DQN/MuZero) + Gym env (see models/PLAN.md)
-ui/                      obs decoder / board render / replay (see ui/PLAN.md)
+DEBUG/ui/                      obs decoder / board render / replay (see DEBUG/ui/PLAN.md)
 examples/                random + alpha-beta player references
-bench/                   throughput benchmarks (bench_throughput.py + C++ bench_step/bench_batched)
+DEBUG/bench/                   throughput benchmarks (bench_throughput.py + C++ bench_step/bench_batched)
 CMakeLists.txt           build system
 pyproject.toml           scikit-build-core editable install
 PLAN.md                  thesis plan + milestone tracking

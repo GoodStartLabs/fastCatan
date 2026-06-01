@@ -39,9 +39,10 @@ import time
 from pathlib import Path
 from typing import NamedTuple
 
-_HERE = Path(__file__).resolve().parent
-_ROOT = _HERE.parent
+_HERE = Path(__file__).resolve().parent       # DEBUG/bench
+_ROOT = _HERE.parents[1]                        # repo root
 sys.path.insert(0, str(_ROOT))
+sys.path.insert(0, str(_ROOT / "EVAL"))         # bridge.* moved under EVAL/
 sys.path.insert(0, str(_ROOT / "examples"))
 
 import numpy as np

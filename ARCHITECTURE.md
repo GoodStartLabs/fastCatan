@@ -11,7 +11,7 @@ the section they need.
 >
 > - **Shapes:** `OBS_SIZE = 1084`, `NUM_ACTIONS = 286`.
 > - **No `tools/` dir exists.** No `train_smoke.py`, `profile_train.py`,
->   `c_api.cpp`, `build_*.sh`, or `tools/test_*.py`. Tests live in `sim/tests/`
+>   `c_api.cpp`, `build_*.sh`, or `tools/test_*.py`. Tests live in `tests/`
 >   and `EVAL/bridge/tests/`. Board viz is `visual/viz_topology.py`. Perft hashes are
 >   not currently checked in.
 > - **`python/fastcatan/` is just `__init__.py`** (re-exports the nanobind
@@ -27,15 +27,15 @@ the section they need.
 >   (single-env + SB3 `DummyVecEnv` by default), **not** a `BatchedEnv` VecEnv.
 >   See `models/PLAN.md`'s status block for PPO reality, the reward design, and
 >   the open stall-cap bug.
-> - The `bench/` section below **is** accurate (plus `bench_common.hpp`, and the
->   Python `bench/bench_throughput.py` + `bench/bench_comprehensive.py`).
+> - The `DEBUG/bench/` section below **is** accurate (plus `bench_common.hpp`, and the
+>   Python `DEBUG/bench/bench_throughput.py` + `DEBUG/bench/bench_comprehensive.py`).
 > - **Correctness/eval lives in `EVAL/bridge/`** (see `EVAL/bridge/PLAN.md`): a true
 >   cross-engine differential vs Catanatron — `state_mirror` (byte-exact
 >   GameState ctypes mirror) + `state_inject` + `rng_force` +
 >   `tests/test_differential.py` + `tests/test_obs_identity.py`. It found and
 >   fixed 5 sim bugs. Obs **count fields are normalized** by structural maxima
 >   (`obs.cpp` `namespace norm`, mirrored in `EVAL/bridge/obs_encoder.py` +
->   `ui/obs_decoder.py`; `OBS_SIZE` stays 1084).
+>   `DEBUG/ui/obs_decoder.py`; `OBS_SIZE` stays 1084).
 
 ## Bird's-eye view
 
@@ -82,7 +82,7 @@ fastCatan/
 ├── src/catan/             core C++ implementations
 ├── bindings/pycatan/      nanobind module bridging C++ ↔ Python
 ├── python/fastcatan/      pure-Python package (wrappers, agents)
-├── bench/                 standalone C++ throughput benchmarks
+├── DEBUG/bench/                 standalone C++ throughput benchmarks
 └── tools/                 build scripts, tests, profilers
 ```
 
@@ -206,31 +206,31 @@ before the auto-reset on `done`.
 
 ---
 
-## Standalone benchmarks — `bench/`
+## Standalone benchmarks — `DEBUG/bench/`
 
 Pure C++ binaries built by CMake; useful for measuring the engine
 without Python overhead.
 
-### `bench/bench_step.cpp`
+### `DEBUG/bench/bench_step.cpp`
 Single-env throughput. Random-legal-action loop driven by a separate
 xoshiro picker. Reports steps/sec, ns/step, games/sec.
 
-### `bench/bench_batched.cpp`
+### `DEBUG/bench/bench_batched.cpp`
 Batched throughput. Same loop but over N envs at once. The fairest
 measure of the C++ core's ceiling on a given machine. With OpenMP
 this scales near-linearly with cores.
 
 ---
 
-## Simulator fuzz — `sim/`
+## Simulator fuzz — `tests/`
 
-### `sim/fuzz_invariants.cpp`
+### `tests/fuzz_invariants.cpp`
 The 10⁷-game invariant correctness gate (PLAN.md §M1). Pure-C++,
 OpenMP-parallel: plays random-legal games and checks per-step invariants —
 resource conservation (bank + hands = 19/resource), hand-size vs resource sum,
 VP ≤ 12 & public ≤ total, settlement/city/road stock bounds (also catches
 uint8 underflow), phase/current_player ranges, non-empty mask, and a winner at
-any terminal. Mirrors the readable spec in `sim/tests/test_invariants.py` but
+any terminal. Mirrors the readable spec in `tests/test_invariants.py` but
 runs the full sweep Python can't (~57k games/s vs ~35/core). CMake target;
 `ctest -R invariants` = 100k-game smoke, `build/fuzz_invariants <games>
 [base_seed] [max_steps]` = full gate. **Result: 0 violations over 10⁷ games /
@@ -239,9 +239,12 @@ runs the full sweep Python can't (~57k games/s vs ~35/core). CMake target;
 Two rule-correct non-terminations exist (counted, never gate failures — every
 invariant still holds): heavy-tail long games, and **deadlocks** where the
 board is built out and the dev deck is exhausted so the last VP is unreachable
-for all players (max VP frozen < 10 forever). `step_one` has no no-progress
-terminal; resolved at the RL level by `models/env.py` `MAX_EPISODE_STEPS`
-(truncate → −1).
+for all players (max VP frozen < 10 forever). The C++ `MAX_TURNS` cap
+(`include/state.hpp`) is the single length authority: `step_one` ends a no-winner
+game as a terminal once `turn_count >= MAX_TURNS`, which `models/env.py`
+`_terminal_reward` maps to `TIE_REWARD` (−2). `MAX_EPISODE_STEPS` (env.py) is a
+should-never-fire learner-step backstop. The per-turn trade-compose cap
+(`MAX_TRADE_COMPOSE_PER_TURN`) guarantees turns end so `MAX_TURNS` is reachable.
 
 ---
 

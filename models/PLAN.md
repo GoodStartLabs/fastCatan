@@ -12,22 +12,25 @@
 >   (`--subproc` to opt into SubprocVecEnv). DummyVecEnv is ~1.45× faster here
 >   because the C++ sim is so cheap that per-step IPC pickling dominates.
 > - **Shapes: `OBS_SIZE=1084`, `NUM_ACTIONS=286`** (286 mask bits in `uint64[5]`).
->   The thesis env is the **anaconda** interpreter (`AB/REPRODUCIBILITY.md` §5);
+>   The thesis env is the **anaconda** interpreter (`EVAL/AB/REPRODUCIBILITY.md` §5);
 >   the editable build (`editable.rebuild=true`) recompiles on import so it can't
 >   go stale. The verified M2/M3 seed is `ppo_1084_50m`.
-> - **Reward (env.py):** +1 learner win; **−1 for every non-win terminal**
->   (opponent win, no-winner, and a `turn_count>=MAX_TURNS` stall cap → −1,
->   `terminated=True`). ✅ **FIXED (2026-05-27):** two-part fix in `env.py`.
->   (1) **Primary** — a per-turn **trade-compose cap** in `action_masks()`
->   (`MAX_TRADE_COMPOSE_PER_TURN=20` masks the ADD/REMOVE/OPEN block, ids 268–288,
->   once spent; CANCEL/ACCEPT/DECLINE/CONFIRM stay legal so the mask is never
->   emptied). The real stall is a *within-turn* `ADD_WANT`→`CANCEL` churn that
+> - **Reward (env.py):** +1 learner win; **−1 for an opponent win**; **−2
+>   (`TIE_REWARD`) for a no-winner terminal** (the C++ `MAX_TURNS` length cap or the
+>   `MAX_EPISODE_STEPS` backstop), strictly worse than a loss so the learner closes
+>   games out. ✅ **FIXED (2026-05-27):** two-part fix below.
+>   (1) **Primary** — a per-turn **trade-compose cap**, now in the C++ core
+>   (`MAX_TRADE_COMPOSE_PER_TURN=50`, `include/state.hpp`; masks the
+>   TRADE_ADD_GIVE..TRADE_OPEN block once spent, CANCEL/ACCEPT/DECLINE/CONFIRM stay
+>   legal so the mask is never emptied; applied to every seat). The real stall is a
+>   *within-turn* `ADD_WANT`→`CANCEL` churn that
 >   never opens a trade nor ends the turn, so `turn_count` (only bumped on
 >   END_TURN, `rules.cpp:540`) froze and the old cap never fired — and a pure
 >   step-counter cap alone is **insufficient**: it truncates *winnable* games
 >   (the policy wins, just after thousands of churn steps, so capping mid-churn
->   counts a win as a loss). (2) **Backstop** — episode cap recounted in
->   *learner steps* (`MAX_EPISODE_STEPS=3000`), not `turn_count`. The **M1 fuzz
+>   counts a win as a loss). (2) **Backstop** — a should-never-fire episode cap in
+>   *learner steps* (`MAX_EPISODE_STEPS=40000`); the C++ `MAX_TURNS=2000` terminal
+>   is the real length authority. The **M1 fuzz
 >   independently proved a no-winner terminal matters**:
 >   ~3/10⁷ random games never reach a winner (board built out + dev deck
 >   exhausted ⇒ last VP unreachable — a rule-correct *deadlock*, not a bug; see
@@ -49,9 +52,9 @@
 >   sampling while a model is still training.
 > - `models/eval.py` is **single-env** (`FastCatanEnv`), not BatchedEnv.
 >   Eval reward = `2·winrate − 1`, so `ep_rew_mean` is a live win-rate proxy.
-> - Benchmarks: `bench/bench_throughput.py` (Python-path breakdown + bottleneck
->   naming + fastcatan-vs-catanatron equal footing), `bench/bench_comprehensive.py`
->   (distribution parity), `bench/bench_step.cpp` + `bench/bench_batched.cpp`
+> - Benchmarks: `DEBUG/bench/bench_throughput.py` (Python-path breakdown + bottleneck
+>   naming + fastcatan-vs-catanatron equal footing), `DEBUG/bench/bench_comprehensive.py`
+>   (distribution parity), `DEBUG/bench/bench_step.cpp` + `DEBUG/bench/bench_batched.cpp`
 >   (pure-C++ floor). Catanatron quirks: see [[catanatron-seat-shuffle]].
 >
 > **M2 GATE: MET ✅** stall-cap fix → retrained 50M on the 1084/286 build
@@ -62,13 +65,14 @@
 >
 > **Obs/reward FROZEN (done).** Obs count fields normalized by structural Catan
 > maxima — divisors in `src/catan/obs.cpp` `namespace norm`, mirrored in
-> `bridge/obs_encoder.py` (`N_*`) + `ui/obs_decoder.py`; parity guarded by
-> `bridge/tests/test_obs_identity.py` (keep all three in sync). Reward sparse
+> `EVAL/bridge/obs_encoder.py` (`N_*`) + `DEBUG/ui/obs_decoder.py`; parity guarded by
+> `EVAL/bridge/tests/test_obs_identity.py` (keep all three in sync). Reward sparse
 > ±1 terminal, non-win terminals = −1. The obs change **invalidated all old
 > checkpoints** — `checkpoints/*` were deleted; retrain on the frozen interface.
 > (✅ stall-cap-on-`turn_count` bug above is now fixed — primary fix is the
-> per-turn trade-compose cap in `action_masks()`, with a `step()`-count backstop;
-> M1 fuzz confirmed the deadlock the backstop guards against is real.)
+> per-turn trade-compose cap in the C++ core (`MAX_TRADE_COMPOSE_PER_TURN`,
+> `state.hpp`), with a `step()`-count backstop; M1 fuzz confirmed the deadlock the
+> backstop guards against is real.)
 >
 > ---
 >
@@ -170,7 +174,7 @@ Industry defaults, light tweaks for discrete-action self-play:
 - `python/fastcatan/__init__.py` — `BatchedEnv`, `OBS_SIZE`, `MASK_WORDS`, `NUM_ACTIONS`
 - `examples/player_base.py:legal_actions` — bit-unpack mask
 - `examples/random_player.py` — opponent policy template
-- `bridge/run_eval.py` — eval-loop shape (for later M4 cross-check vs Catanatron)
+- `EVAL/bridge/run_eval.py` — eval-loop shape (for later M4 cross-check vs Catanatron)
 
 ## Verification
 

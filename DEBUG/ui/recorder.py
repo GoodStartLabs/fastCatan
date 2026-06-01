@@ -10,7 +10,7 @@ Usage:
     record_game(
         seed=42,
         players=players,
-        out_path="logs/game_0000.jsonl.gz",
+        out_path="DEBUG/logs/game_0000.jsonl.gz",
         snap_every=1,            # snapshot every step (default)
     )
 """
@@ -120,14 +120,15 @@ def record_game(
 
 
 # ---------------------------------------------------------------------------
-# CLI: `python -m ui.recorder --seed 42 --out logs/game.jsonl.gz`
+# CLI: `PYTHONPATH=DEBUG python -m ui.recorder --seed 42 --out DEBUG/logs/game.jsonl.gz`
 # ---------------------------------------------------------------------------
 
 def _main(argv: list[str]) -> int:
     import argparse
 
     # examples/ is not a package — add to sys.path for the CLI use case.
-    repo_root = Path(__file__).resolve().parents[1]
+    # recorder.py is DEBUG/ui/recorder.py, so repo root is parents[2].
+    repo_root = Path(__file__).resolve().parents[2]
     sys.path.insert(0, str(repo_root / "examples"))
 
     parser = argparse.ArgumentParser(description="Record one fastcatan game.")

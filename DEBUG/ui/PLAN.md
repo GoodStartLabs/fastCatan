@@ -1,4 +1,4 @@
-# `ui/` — Visual Debugger & Replay
+# `DEBUG/ui/` — Visual Debugger & Replay
 
 Visual layer for fastcatan. Purpose: human-readable rendering of board, obs
 vector, and legal-action mask. Used for debugging the engine, debugging the
@@ -19,7 +19,7 @@ All data comes from the existing engine surface — no new C++ needed.
   `largest_army_owner`).
 - `env.write_obs(pov, buf)` → float32[`OBS_SIZE`]. POV-relative encoding.
   Layout documented in `src/catan/obs.cpp` and mirrored in
-  `bridge/obs_encoder.py`. Count fields are **normalized** by structural Catan
+  `EVAL/bridge/obs_encoder.py`. Count fields are **normalized** by structural Catan
   maxima (`obs.cpp` `namespace norm`); `obs_decoder.py` de-normalizes them on
   decode (its `N_*` divisors MUST match obs.cpp / obs_encoder.py).
 - `env.action_mask(buf)` → uint64[`MASK_WORDS`]. Bit `i` of word `w` = action
@@ -36,10 +36,10 @@ of any POV — no new C++ accessors required. The obs decoder (M2) extracts it.
 
 ---
 
-## Components (in `ui/`)
+## Components (in `DEBUG/ui/`)
 
 ```
-ui/
+DEBUG/ui/
   PLAN.md              ← this file
   obs_layout.py        ← M2: named slice ranges over the float32 obs vector
   obs_decoder.py       ← M2: obs → structured dict (board, hands, meta)
@@ -101,7 +101,7 @@ No subdirs unless we add a JS/web frontend later (out of scope for v1).
   mirroring `examples/random_player_test.py::play_one` but emitting the log.
   Should be a near-drop-in so the existing test harness can opt in via flag.
 
-### M2 — Obs decoder — DONE (needs cross-check vs `bridge/obs_encoder.py`)
+### M2 — Obs decoder — DONE (needs cross-check vs `EVAL/bridge/obs_encoder.py`)
 - **`obs_layout.py`**: constants for every named slice of the obs vector
   (`PLAYER_BLOCKS = slice(0, 4*15)`, `SELF_PRIVATE = …`, `NODES = …`,
   `EDGES = …`, `HEXES = …`, `HEX_NUMS = …`, `PORTS = …`, `ROBBER = …`,
@@ -109,7 +109,7 @@ No subdirs unless we add a JS/web frontend later (out of scope for v1).
   `LR_OWNER`, `LA_OWNER`, `START_PLAYER`, `FREE_ROADS`, `TRADE_SCRATCH = …`).
   Single source of truth for both decoder and any obs-slot viewer.
 
-  Cross-check against `bridge/obs_encoder.py` order (it is the canonical
+  Cross-check against `EVAL/bridge/obs_encoder.py` order (it is the canonical
   Python mirror) and `src/catan/obs.cpp` (the C++ writer). Add an assertion
   test that the sum of slice widths equals `fastcatan.OBS_SIZE`.
 
@@ -162,7 +162,7 @@ No subdirs unless we add a JS/web frontend later (out of scope for v1).
 ### M5 — Replayer CLI — DONE (frames in `logs/frames/`, still debugging)
 - **`replay.py`**: entry-point.
   ```
-  python -m ui.replay path/to/game.jsonl.gz
+  PYTHONPATH=DEBUG python -m ui.replay path/to/game.jsonl.gz
       --start N           # seek to step N
       --auto              # autoplay
       --delay 0.5         # seconds between frames in --auto
@@ -181,7 +181,7 @@ No subdirs unless we add a JS/web frontend later (out of scope for v1).
   `"SETTLE @ node 0x24"`, `198` → `"ROAD @ edge 0x06"`. Drives:
   - per-step log header ("step 142 — P1 ROAD @ edge 0x12, r=0, d=0")
   - mask side-panel chip labels.
-- Symmetric to `bridge/action_codec.py::encode_to_fast_ids` but for human
+- Symmetric to `EVAL/bridge/action_codec.py::encode_to_fast_ids` but for human
   consumption only.
 
 ---
@@ -189,7 +189,7 @@ No subdirs unless we add a JS/web frontend later (out of scope for v1).
 ## Open questions to revisit after M1
 
 - **Replay seeking strategy**: snapshot-every-step (~few KB/step) vs. every
-  K + replay-forward. JSONL size matters for `bench/results/*` — many games
+  K + replay-forward. JSONL size matters for `DEBUG/bench/results/*` — many games
   will be logged. Start with every step; profile; switch if needed.
 - **Catanatron-side recording**: same log format from the bridge? The bridge
   has its own action stream; we'd record fastcatan IDs from `rep_map` and

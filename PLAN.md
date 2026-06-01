@@ -55,7 +55,7 @@ fastCatan/
 ├── tests/
 │   ├── cpp/{test_rules,test_mask,test_longest_road,test_determinism}.cpp
 │   └── python/{test_gym_api,test_invariants}.py
-└── bench/bench_step.cpp               # Google Benchmark, pure-C++ numbers
+└── DEBUG/bench/bench_step.cpp               # Google Benchmark, pure-C++ numbers
 ```
 
 ### Public C++ API (kept minimal)
@@ -169,10 +169,10 @@ For trading-net training (M3 self-play+): a PettingZoo AEC wrapper yields contro
 
 Enforced at three levels:
 
-1. **Internal invariants & scenarios** (`sim/tests/`, pytest): resource
+1. **Internal invariants & scenarios** (`tests/`, pytest): resource
    conservation, mask legality, phase/flag transitions, determinism
    (fixed-seed trajectory), terminal reward. Scaled to the **10⁷-game gate**
-   by the C++ fuzz harness `sim/fuzz_invariants.cpp` — random-legal play, the
+   by the C++ fuzz harness `tests/fuzz_invariants.cpp` — random-legal play, the
    same per-step invariants, OpenMP across cores (`ctest -R invariants` =
    100k-game smoke ~2 s; `build/fuzz_invariants 10000000` = full gate ~3 min).
    **M1 result: 0 invariant violations over 10⁷ games / 4.04×10¹⁰ steps.**
@@ -237,13 +237,13 @@ Goal: validate the C++ sim plays Catan correctly before any RL touches it. Self-
 
 - [x] Random baseline (Python).
 - [x] Alpha-Beta baseline (Python): depth-limited minimax + multi-feature heuristic.
-- [x] Log capture: random baseline games (action stream, board state, seed). `ui/recorder.py` + `logs/game.jsonl.gz`.
+- [x] Log capture: random baseline games (action stream, board state, seed). `DEBUG/ui/recorder.py` + `DEBUG/logs/game.jsonl.gz`.
 - [x] Log capture: Alpha-Beta baseline games.
 - [x] Catanatron bridge: topology map, action codec, obs encoder, run_eval. 281 bridge tests green (`EVAL/bridge/tests/`), verified at the 1084/286 build + catanatron `41ba0db` (2026-05-27).
 - [x] Replay parity tests: `EVAL/bridge/tests/test_parity_replay.py` walks shared-seed games action-by-action against Catanatron.
 - [x] **Cross-engine differential** (`EVAL/bridge/tests/test_differential.py` + `test_obs_identity.py`): co-steps fastcatan *and* Catanatron on identical action streams, asserts full state + obs parity every ply (via the `state_mirror`/`state_inject`/`rng_force` harness). Found and fixed **5 real sim bugs** (see Correctness). 25-seed corpus green; residual ≤1–2% is Catanatron's own longest-road inconsistency (documented, exempted).
-- [x] Throughput + bottleneck dashboard: `bench/bench_throughput.py` (Python-path breakdown) + `bench/bench_step.cpp` & `bench/bench_batched.cpp` (pure-C++ floor, standalone CMake targets). `bench_throughput.py` gives the single-env per-component µs breakdown, batched kernel scaling with nanobind-dispatch isolation, and fastcatan-vs-Catanatron on equal footing (games/s, turns/s; steps/s flagged non-comparable). `bench/bench_comprehensive.py` covers the distribution half (episode length percentiles, win rates per seat, VP). **Bottlenecks named:** single-env baseline is *Python-bound* — the legal-action bit-scan (`legal_actions`) is the largest kernel (~410 ns, ~36% of per-step) and total Python overhead (scan + interpreter glue + policy) is ~80%; the pure-C++ `step_one` is only ~47 ns (Release, `bench_step` replay) ≈ 4% of the per-step budget, with another ~76 ns of nanobind dispatch + return-tuple alloc on top in the bound path. Batched hot path is *obs-encode-bound* — `write_obs` (~80 ns/env, 1084 floats) dominates `step_one` (~40 ns/env) once dispatch amortizes (dispatch floor ~40 ns/call). Note: `step_one` fuses rules+mask-update+RNG and is not separable from Python; combined it is ~47 ns so not the bottleneck. Single-env 0.75M steps/s (Python) vs batched 24M steps/s = the ~32× amortization that justifies `BatchedEnv`; pure-C++ floors are ~21M (single-env `step_one`) and ~11M/core (`bench_batched 4096`, single-thread, near-linear with OpenMP). Equal footing vs Catanatron random4: ~7× games/s and ~7× turns/s.
-- [x] 10⁷-game invariant fuzz run. C++ harness `sim/fuzz_invariants.cpp` (OpenMP, random-legal play, per-step invariant checks mirroring the `sim/tests/test_invariants.py` spec: resource conservation, hand-size, VP/piece-stock bounds, phase/player ranges, non-empty mask, terminal winner). CMake target `fuzz_invariants` + `ctest -R invariants` (100k-game smoke, ~2 s). **Full gate green: 10⁷ games, 4.04×10¹⁰ steps, 0 invariant violations** (~176 s, 230M steps/s, 57k games/s on 24 cores). 3 / 10⁷ games hit the 10⁶-step cap without a winner — rule-correct non-termination, not an invariant breach: either a heavy-tail long game (seed 1366915 terminates at 194 018 steps) or a **deadlock** — board built out + dev deck exhausted ⇒ the last 1–2 VP are unreachable for every player (seed 2446268: max VP across all players never exceeds 9 over 10⁸ steps; longest road + largest army already locked). No-winner games have no sim-level terminal; handled at the RL level by `models/env.py` `MAX_EPISODE_STEPS` (truncate → −1).
+- [x] Throughput + bottleneck dashboard: `DEBUG/bench/bench_throughput.py` (Python-path breakdown) + `DEBUG/bench/bench_step.cpp` & `DEBUG/bench/bench_batched.cpp` (pure-C++ floor, standalone CMake targets). `bench_throughput.py` gives the single-env per-component µs breakdown, batched kernel scaling with nanobind-dispatch isolation, and fastcatan-vs-Catanatron on equal footing (games/s, turns/s; steps/s flagged non-comparable). `DEBUG/bench/bench_comprehensive.py` covers the distribution half (episode length percentiles, win rates per seat, VP). **Bottlenecks named:** single-env baseline is *Python-bound* — the legal-action bit-scan (`legal_actions`) is the largest kernel (~410 ns, ~36% of per-step) and total Python overhead (scan + interpreter glue + policy) is ~80%; the pure-C++ `step_one` is only ~47 ns (Release, `bench_step` replay) ≈ 4% of the per-step budget, with another ~76 ns of nanobind dispatch + return-tuple alloc on top in the bound path. Batched hot path is *obs-encode-bound* — `write_obs` (~80 ns/env, 1084 floats) dominates `step_one` (~40 ns/env) once dispatch amortizes (dispatch floor ~40 ns/call). Note: `step_one` fuses rules+mask-update+RNG and is not separable from Python; combined it is ~47 ns so not the bottleneck. Single-env 0.75M steps/s (Python) vs batched 24M steps/s = the ~32× amortization that justifies `BatchedEnv`; pure-C++ floors are ~21M (single-env `step_one`) and ~11M/core (`bench_batched 4096`, single-thread, near-linear with OpenMP). Equal footing vs Catanatron random4: ~7× games/s and ~7× turns/s.
+- [x] 10⁷-game invariant fuzz run. C++ harness `tests/fuzz_invariants.cpp` (OpenMP, random-legal play, per-step invariant checks mirroring the `tests/test_invariants.py` spec: resource conservation, hand-size, VP/piece-stock bounds, phase/player ranges, non-empty mask, terminal winner). CMake target `fuzz_invariants` + `ctest -R invariants` (100k-game smoke, ~2 s). **Full gate green: 10⁷ games, 4.04×10¹⁰ steps, 0 invariant violations** (~176 s, 230M steps/s, 57k games/s on 24 cores). 3 / 10⁷ games hit the 10⁶-step cap without a winner — rule-correct non-termination, not an invariant breach: either a heavy-tail long game (seed 1366915 terminates at 194 018 steps) or a **deadlock** — board built out + dev deck exhausted ⇒ the last 1–2 VP are unreachable for every player (seed 2446268: max VP across all players never exceeds 9 over 10⁸ steps; longest road + largest army already locked). No-winner games have no sim-level terminal; handled at the RL level by `models/env.py` `MAX_EPISODE_STEPS` (truncate → −1).
 - **Gate: zero rule divergence vs Catanatron on replay corpus; per-component bottleneck named with measured µs in dashboard.**
 
 ### M2 — Initial RL Agent (DONE ✅ — gate met)
@@ -252,8 +252,8 @@ Goal: validate the C++ sim plays Catan correctly before any RL touches it. Self-
 - [x] MaskablePPO trainer (`models/train_ppo.py`) + checkpoint at `models/checkpoints/ppo_random/ppo_final.zip`.
 - [x] Reference trainers in separate files for thesis breadth: A2C, DQN, MuZero scaffold (`models/train_{a2c,dqn,muzero}.py`) + checkpoints.
 - [x] Eval harness `models/eval.py` (win rate + 95% Wilson CI vs random over N games).
-- [x] Lock observation encoder + reward. **Obs frozen**: 1084 floats, count fields normalized by structural Catan maxima (divisors in `src/catan/obs.cpp` `namespace norm`, mirrored in `EVAL/bridge/obs_encoder.py` + `ui/obs_decoder.py` — keep in sync; verified by `test_obs_identity`). **Reward frozen**: sparse ±1 terminal (+1 on the action reaching 10 VP, −1 if it lets an opponent win), no shaping; `models/env.py` treats a stalled game (`turn_count >= MAX_TURNS=1000`) and a no-winner terminal as a **loss** (−1). NOTE: changing obs/reward invalidates trained checkpoints — the old `models/checkpoints/*` were deleted after this freeze.
-- [x] ✅ **Stall fixed (two-part, `models/env.py`).** The dominant stall is a *within-turn* `ADD_WANT`→`TRADE_CANCEL` trade-compose loop that never opens a trade nor ends the turn, so `turn_count` (only bumped on END_TURN, `src/catan/rules.cpp:540`) froze and the old `turn_count`-based −1 cap never fired (~85% of greedy/argmax games stalled to the limit). **Primary fix:** a per-turn **trade-compose cap** in `action_masks()` (`MAX_TRADE_COMPOSE_PER_TURN=20` masks the ADD/REMOVE/OPEN block, ids 268–288, once spent; CANCEL/ACCEPT/DECLINE/CONFIRM stay legal so the mask is never emptied). **Backstop:** the episode cap recounted in per-episode *learner steps* (`MAX_EPISODE_STEPS=3000`), not `turn_count`. A step-counter cap *alone* is insufficient — it truncates *winnable* games (the policy wins, just after thousands of churn steps, so capping mid-churn scores a win as a loss). **M1 fuzz independently confirmed a no-winner terminal is necessary**: ~3/10⁷ random games reach a rule-correct deadlock (board built out + dev deck exhausted ⇒ last VP unreachable) with no sim-level terminal (see §M1).
+- [x] Lock observation encoder + reward. **Obs frozen**: 1084 floats, count fields normalized by structural Catan maxima (divisors in `src/catan/obs.cpp` `namespace norm`, mirrored in `EVAL/bridge/obs_encoder.py` + `DEBUG/ui/obs_decoder.py` — keep in sync; verified by `test_obs_identity`). **Reward frozen**: sparse ±1 terminal (+1 on the action reaching 10 VP, −1 if it lets an opponent win), no shaping; `models/env.py` scores a no-winner terminal (the C++ `MAX_TURNS=2000` length cap, or the `MAX_EPISODE_STEPS` learner-step backstop) as **−2** (`TIE_REWARD`), strictly worse than a loss (−1) so the learner closes games out. NOTE: changing obs/reward invalidates trained checkpoints — the old `models/checkpoints/*` were deleted after this freeze.
+- [x] ✅ **Stall fixed (two-part, `models/env.py`).** The dominant stall is a *within-turn* `ADD_WANT`→`TRADE_CANCEL` trade-compose loop that never opens a trade nor ends the turn, so `turn_count` (only bumped on END_TURN, `src/catan/rules.cpp:540`) froze and the old `turn_count`-based −1 cap never fired (~85% of greedy/argmax games stalled to the limit). **Primary fix:** a per-turn **trade-compose cap**, now in the C++ core (`MAX_TRADE_COMPOSE_PER_TURN=50`, `include/state.hpp`; masks the TRADE_ADD_GIVE..TRADE_OPEN block once spent, CANCEL/ACCEPT/DECLINE/CONFIRM stay legal so the mask is never emptied; applied to every seat). **Backstop:** a should-never-fire per-episode *learner-step* cap (`MAX_EPISODE_STEPS=40000`); the C++ `MAX_TURNS=2000` terminal is the real length authority. A step-counter cap *alone* is insufficient — it truncates *winnable* games (the policy wins, just after thousands of churn steps, so capping mid-churn scores a win as a loss). **M1 fuzz independently confirmed a no-winner terminal is necessary**: ~3/10⁷ random games reach a rule-correct deadlock (board built out + dev deck exhausted ⇒ last VP unreachable) with no sim-level terminal (see §M1).
 - [x] ✅ **Gate MET (2026-05-28).** `ppo_1084_50m` (MaskablePPO, 768 envs, 50M steps, checkpoints every 5M) clears the M2 gate on the 1084/286 build — **95.5%** vs random native (200g, sampling, CI-low 0.917, `models.eval`) and **89.5%** via the bridge vs `RandomPlayer` (200g, `--no-trades`, CI [0.845, 0.930], 0 no-winner). Eval with **sampling** for undertrained models (argmax stalls/underperforms before convergence; 10M steps was too few — converges ~15–20M). This is the verified M3 self-play warm-start seed.
 - **Gate: >90% win rate vs random baseline over 1000 four-player games.**
 
@@ -308,11 +308,12 @@ plays any seat on that seat's POV obs — opponents are driven from Python, exac
   archive+stats to `league_state.json`. Inline gate now loads its two contestants from the
   append-only on-disk `snap_paths`, so "latest vs N-ago" is correct under resume AND league
   eviction. Just re-pass `--run-name`.
-- [~] **Trade-loop stall**: four strong policies stall the TRADE_OPEN/CANCEL loop → no
-  winner → gate undecidable. Worked around with **`--no-p2p-trade`** (Python mask AND-NOT,
-  applied in train AND gate). M2's later per-turn **trade-compose cap** (`action_masks`,
-  §M2) plausibly mitigates this with trading intact — **re-verify on 1084 whether
-  `--no-p2p-trade` is still needed** (the thesis wants full trading).
+- [x] ✅ **Trade-loop stall RESOLVED**: four strong policies used to stall the
+  TRADE_OPEN/CANCEL loop → no winner → gate undecidable. Fixed by the per-turn
+  **trade-compose cap**, now in the C++ core (`MAX_TRADE_COMPOSE_PER_TURN=50`,
+  `state.hpp`, all seats). The M3 sweep then passed the gate with **trades ON**
+  (12/12 conclusive, 0 no-winner; see the M3-result bullet below), so
+  `--no-p2p-trade` is no longer required — it stays as an optional ablation.
 - [~] **Run the schedule + sweep + league — IN PROGRESS 2026-05-28** (running now,
   warm-started from the verified 1084 seed `ppo_1084_50m`, §M2 — 95.5% vs random
   native / 89.5% via bridge — via `--init-from
@@ -383,7 +384,7 @@ At 5×10⁷ steps/sec with N=4096 envs, a `step()` call is ~80 µs of native wor
 8. `include/catan/batched_env.hpp` + `src/catan/batched_env.cpp` — batched stepping
 9. `bindings/pycatan/bindings.cpp` — nanobind exposure
 10. `python/fastcatan/gym_env.py` — single-agent wrapper
-11. `bench/bench_step.cpp` + `python/fastcatan/benchmarks/throughput.py` — benchmarks
+11. `DEBUG/bench/bench_step.cpp` + `python/fastcatan/benchmarks/throughput.py` — benchmarks
 
 ## Verification
 

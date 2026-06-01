@@ -70,4 +70,4 @@ worth it.
 ## Gotcha: obs normalization must stay in sync
 
 `obs_encoder.py` `N_*` divisors MUST equal `src/catan/obs.cpp` `namespace norm`
-and `ui/obs_decoder.py` `N_*`. `test_obs_identity` guards this.
+and `DEBUG/ui/obs_decoder.py` `N_*`. `test_obs_identity` guards this.

@@ -51,11 +51,11 @@ endif()
 #   build/bench_step                  # single-env: step_one + random play
 #   build/bench_batched 4096 5000     # batched (uses OpenMP if available)
 # These corroborate the nanobind-dispatch isolation in
-# bench/bench_throughput.py.
+# DEBUG/bench/bench_throughput.py.
 # --------------------------------------------------------------------
 if(NOT SKBUILD)
     foreach(_bench bench_step bench_batched)
-        add_executable(${_bench} bench/${_bench}.cpp)
+        add_executable(${_bench} DEBUG/bench/${_bench}.cpp)
         target_link_libraries(${_bench} PRIVATE fastcatan_core)
         target_compile_options(${_bench} PRIVATE
             $<$<CONFIG:Release>:${FCATAN_RELEASE_FLAGS}>)
@@ -65,12 +65,12 @@ if(NOT SKBUILD)
     # Invariant fuzz harness — the M1 correctness gate (PLAN.md §M1,
     # Verification). Plays random-legal games in pure C++ and checks
     # per-step game invariants; the readable spec lives in
-    # sim/tests/test_invariants.py. OpenMP pragmas live in this TU, so it
+    # tests/test_invariants.py. OpenMP pragmas live in this TU, so it
     # links OpenMP directly (the bench targets inherit it only via core).
     #   build/fuzz_invariants 10000000     # full thesis gate (~minutes)
     #   ctest -R invariants                # fast CI smoke (100k games)
     # ----------------------------------------------------------------
-    add_executable(fuzz_invariants sim/fuzz_invariants.cpp)
+    add_executable(fuzz_invariants tests/fuzz_invariants.cpp)
     target_link_libraries(fuzz_invariants PRIVATE fastcatan_core)
     target_compile_options(fuzz_invariants PRIVATE
         $<$<CONFIG:Release>:${FCATAN_RELEASE_FLAGS}>)

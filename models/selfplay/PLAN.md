@@ -114,8 +114,8 @@ unchanged and you can A/B window-pool vs league.
 equally — cancels seat bias. Metric = the latest *team's* share of decided games;
 each team holds 2 of 4 seats so **equal policies → 0.50**, and **>0.55 = better**
 (the thesis's intended semantics). Win share + 95% Wilson CI; PASS iff conclusive
-(low no-winner) AND share > threshold. Sampling policy (argmax trips the
-trade-loop stall, root `PLAN.md`).
+(low no-winner) AND share > threshold. Sampling policy (the validated eval mode;
+argmax can lock into degenerate trajectories before convergence).
 
 Verified on the 5M smoke (`--no-p2p-trade`, N=120): r4-vs-r4 = **0.483** (parity,
 neutral confirmed), r4-vs-r3 = **0.642** PASS, r4-vs-r1 = **0.875** PASS. The old
@@ -139,7 +139,13 @@ Grid over `--lr × --ent-coef × --steps-per-round`. Shells out one
 4. **Gate run**: after a real schedule, `python -m models.selfplay.gate` reports
    latest-vs-N-ago > 0.55. **M3 gate met.**
 
-## Known finding — the trade-loop stall blocks the gate (read before a run)
+## Known finding — the trade-loop stall (RESOLVED; historical, kept for context)
+
+> **RESOLVED (2026-05-30):** the per-turn trade-compose cap landed in the C++ core
+> (`MAX_TRADE_COMPOSE_PER_TURN`, `include/state.hpp`, all seats); the M3 sweep then
+> passed the gate with trades ON (root PLAN.md §M3). `--no-p2p-trade` is now an
+> optional ablation, not a requirement. The 2026-05-27 finding below is kept for
+> context.
 
 Smoke (2026-05-27) verified the plumbing AND surfaced a real blocker:
 
@@ -155,10 +161,11 @@ Smoke (2026-05-27) verified the plumbing AND surfaced a real blocker:
   1. **`--no-p2p-trade`** (this dir, Python mask AND-NOT): forbids p2p trades in
      train AND gate. With it, the same matchup goes **12/12 decided, 0 no-winner**.
      Opt-in; use the SAME setting in train and gate.
-  2. **Proper fix = C++ mask cap on TRADE_OPEN re-opens per turn** — the open M2
-     item in root PLAN.md. Lives in the simulator, not here. Once it lands,
-     drop `--no-p2p-trade` and the gate works on the full game (trading intact),
-     which is what the thesis wants.
+  2. **Proper fix = C++ per-turn trade-compose cap** (`MAX_TRADE_COMPOSE_PER_TURN`,
+     `include/state.hpp`) — **LANDED**. Lives in the simulator (all seats), so the
+     gate now works on the full game with trading intact: the M3 sweep passed
+     **trades ON** (12/12 conclusive, 0 no-winner, root PLAN.md §M3).
+     `--no-p2p-trade` is no longer required, kept as an optional ablation.
 - **Neutral baseline is 0.25, and the >0.55 gate bar is miscalibrated.**
   Equal policies (newest at all 4 seats, `--no-p2p-trade`, N=120 via
   `eval_seats.py --equal-baseline`) split **0.233/0.250/0.233/0.283 ≈ 0.25 each
@@ -279,7 +286,7 @@ Findings:
       vs-random (3 opponent fwd-passes/step on CPU) and does NOT scale with
       num_envs (DummyVecEnv steps sequentially) — 8 envs is the peak; 1B ≈ 6.7 days.**
 - [x] ⚠️ **M4 re-test on the 200M self-play model: STILL 0/200 vs AlphaBeta**
-      (2026-06-01, depth2 prune --no-trades, `AB/results/tournament_ppo_alphabeta_
+      (2026-06-01, depth2 prune --no-trades, `EVAL/AB/results/tournament_ppo_alphabeta_
       20260601_100313.json`). Despite the league gate PASS + 86.7% vs-random, the
       self-play model wins **0 of 200** vs AlphaBeta — identical to the pre-self-play
       seed. **The "M3 self-play → beats AlphaBeta" hypothesis is FALSIFIED for this

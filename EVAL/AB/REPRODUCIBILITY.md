@@ -58,7 +58,7 @@ The committed source defines the interface, confirmed by compiling the headers:
 | `NUM_PLAYERS` | 4 |
 | reward | sparse ±1 terminal (+1 learner win, −1 any non-win terminal) |
 
-`EVAL/bridge/obs_encoder.py` and `ui/obs_decoder.py` mirror this 1084 layout;
+`EVAL/bridge/obs_encoder.py` and `DEBUG/ui/obs_decoder.py` mirror this 1084 layout;
 `EVAL/bridge/tests/test_obs_identity.py` passes (encoder ↔ C++ `write_obs`,
 bit-for-bit — verified, `results/validation_1084.md`).
 
@@ -175,9 +175,10 @@ Defaults (the winning config — 768 envs clears the M2 >90%-vs-random gate):
 | clip_range | 0.2 |
 | seed | 42 |
 
-Trained **with** the trade-compose stall cap (`models/env.py`,
-`MAX_TRADE_COMPOSE_PER_TURN = 20`); opponents during training are 3
-uniform-random-legal seats.
+Trained **with** the per-turn trade-compose stall cap (then
+`MAX_TRADE_COMPOSE_PER_TURN = 20` in `models/env.py`; since moved into the C++
+core, `include/state.hpp`, value 50, applied to every seat); opponents during
+training are 3 uniform-random-legal seats.
 
 - **Seed model:** `ppo_1084_50m`, trained on the **1084/286** interface in the
   anaconda env (768 envs, 50M steps, checkpoints every 5M). This is the verified
@@ -200,9 +201,11 @@ uniform-random-legal seats.
 - AlphaBetaPlayer has a **20s/move** deadline. At depth 2 with `--ab-prune` a
   1000-game run is tractable; unpruned is ~6.4 s/game. The JSON records
   `--ab-depth`/`--ab-prune` with every result.
-- Eval uses **sampling** policy by default. Argmax (`--deterministic`) can stall
-  in the within-turn trade-compose loop (`models/PLAN.md`); the bridge bounds it
-  via `_COMPOSE_LOOP_CAP`, but sampling is the validated mode.
+- Eval uses **sampling** policy by default. The C++ trade-compose cap
+  (`MAX_TRADE_COMPOSE_PER_TURN`, `include/state.hpp`) prevents the within-turn
+  trade-loop stall on the native path even under argmax (`--deterministic`); the
+  bridge keeps its own `_COMPOSE_LOOP_CAP` per-call guard. Sampling is still the
+  validated mode.
 - Catanatron's longest-road is internally inconsistent on road cuts; fastcatan is
   rule-correct. The ≤1–2% differential residual is documented and exempted in
   `EVAL/bridge/tests/test_differential.py` — it does not affect tournament outcomes.
