@@ -41,13 +41,13 @@ pip install -U pip
 pip install cmake ninja nanobind scikit-build-core    # build deps
 pip install -e . --no-build-isolation --config-settings=editable.rebuild=true  # build + auto-rebuild on source edits
 pip install torch sb3-contrib stable-baselines3         # for training
-pip install -r requirements.txt                         # catanatron (pinned) for the bridge/eval path
+pip install -r requirements.txt                         # catanatron (pinned) for the EVAL/bridge/eval path
 ```
 
 > `editable.rebuild=true` makes scikit-build-core recompile the extension on the
 > next `import fastcatan` after any C++ change. Without it, `pip install -e .`
 > builds once and the binary silently goes stale when `obs.hpp`/`mask.hpp` change
-> (see `AB/REPRODUCIBILITY.md` §5).
+> (see `EVAL/AB/REPRODUCIBILITY.md` §5).
 
 Verify:
 
@@ -61,7 +61,7 @@ Run the correctness gates (after `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 ```bash
 ctest --test-dir build -R invariants            # 100k-game invariant fuzz smoke (~2s)
 build/fuzz_invariants 10000000                  # full 10⁷-game gate (~3 min, OpenMP)
-python3 -m pytest sim/tests/ bridge/tests/ -q   # unit + cross-engine differential
+python3 -m pytest sim/tests/ EVAL/bridge/tests/ -q   # unit + cross-engine differential
 ```
 
 M1 gate result: 0 invariant violations over 10⁷ games / 4.04×10¹⁰ steps (see PLAN.md §M1).
@@ -198,8 +198,8 @@ for ~21% throughput win.
 Fields are POV-relative (self always at slot 0, opponents at +1, +2, +3).
 Count fields (VP, hand size, resources, road length, bank, …) are **normalized**
 by structural Catan maxima (see `src/catan/obs.cpp` `namespace norm`); one-hots
-and bit flags stay 0/1. The bridge eval encoder (`bridge/obs_encoder.py`)
-mirrors these divisors exactly — `bridge/tests/test_obs_identity.py` guards it.
+and bit flags stay 0/1. The bridge eval encoder (`EVAL/bridge/obs_encoder.py`)
+mirrors these divisors exactly — `EVAL/bridge/tests/test_obs_identity.py` guards it.
 
 ### Reward
 
@@ -223,7 +223,7 @@ bindings/pycatan/        nanobind module
 python/fastcatan/        Python package (re-exports + Gym/PettingZoo wrappers)
 sim/tests/               Python correctness tests (invariants, scenarios, determinism, mask)
 sim/fuzz_invariants.cpp  10⁷-game C++ invariant fuzz gate (ctest -R invariants; see PLAN.md M1)
-bridge/                  Catanatron interop + cross-engine differential (see bridge/PLAN.md)
+EVAL/bridge/                  Catanatron interop + cross-engine differential (see EVAL/bridge/PLAN.md)
 models/                  RL trainers (PPO + A2C/DQN/MuZero) + Gym env (see models/PLAN.md)
 ui/                      obs decoder / board render / replay (see ui/PLAN.md)
 examples/                random + alpha-beta player references

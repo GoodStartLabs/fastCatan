@@ -12,14 +12,14 @@ the section they need.
 > - **Shapes:** `OBS_SIZE = 1084`, `NUM_ACTIONS = 286`.
 > - **No `tools/` dir exists.** No `train_smoke.py`, `profile_train.py`,
 >   `c_api.cpp`, `build_*.sh`, or `tools/test_*.py`. Tests live in `sim/tests/`
->   and `bridge/tests/`. Board viz is `visual/viz_topology.py`. Perft hashes are
+>   and `EVAL/bridge/tests/`. Board viz is `visual/viz_topology.py`. Perft hashes are
 >   not currently checked in.
 > - **`python/fastcatan/` is just `__init__.py`** (re-exports the nanobind
 >   symbols: `Env`, `BatchedEnv`, `action`, shape constants). There is NO
 >   `gym_env.py`, `pettingzoo_env.py`, `tournament.py`, `alphabeta.py`, or
 >   `selfplay.py`. The single-agent Gym env is **`models/env.py`**
 >   (`FastCatanEnv`); the alpha-beta player is **`examples/alphabeta_player.py`**;
->   the Catanatron bridge + eval live in **`bridge/`**.
+>   the Catanatron bridge + eval live in **`EVAL/bridge/`**.
 > - **No `fastcatan` shared lib / ctypes shim.** CMake builds `fastcatan_core`
 >   (static), `bench_step`, `bench_batched`, and `_fastcatan` (nanobind, gated on
 >   `SKBUILD`).
@@ -29,12 +29,12 @@ the section they need.
 >   the open stall-cap bug.
 > - The `bench/` section below **is** accurate (plus `bench_common.hpp`, and the
 >   Python `bench/bench_throughput.py` + `bench/bench_comprehensive.py`).
-> - **Correctness/eval lives in `bridge/`** (see `bridge/PLAN.md`): a true
+> - **Correctness/eval lives in `EVAL/bridge/`** (see `EVAL/bridge/PLAN.md`): a true
 >   cross-engine differential vs Catanatron — `state_mirror` (byte-exact
 >   GameState ctypes mirror) + `state_inject` + `rng_force` +
 >   `tests/test_differential.py` + `tests/test_obs_identity.py`. It found and
 >   fixed 5 sim bugs. Obs **count fields are normalized** by structural maxima
->   (`obs.cpp` `namespace norm`, mirrored in `bridge/obs_encoder.py` +
+>   (`obs.cpp` `namespace norm`, mirrored in `EVAL/bridge/obs_encoder.py` +
 >   `ui/obs_decoder.py`; `OBS_SIZE` stays 1084).
 
 ## Bird's-eye view

@@ -1,10 +1,10 @@
-# AB/ — M4: Alpha-Beta eval + final-model thesis gate
+# EVAL/AB/ — M4: Alpha-Beta eval + final-model thesis gate
 
 The thesis claim lives here: **the trained RL agent beats Catanatron's
 Alpha-Beta with statistical significance — win rate > 25% over ≥1000 four-player
 games, 95% CI** (`PLAN.md` M4, root). 0.25 is the 4-player chance baseline.
 
-The agent plays through `bridge/CatanatronBridge` *inside Catanatron's reference
+The agent plays through `EVAL/bridge/CatanatronBridge` *inside Catanatron's reference
 engine*, so the numbers are directly comparable to Catanatron paper baselines.
 
 ## Files
@@ -28,7 +28,7 @@ The RL interface is **obs 1084 / actions 286**, and all M4 work runs in the
 Catanatron is a **pinned git build, not PyPI** (3.3.0 @ `41ba0db`, "deterministic
 discards"); installed editable from `/home/sinan/Desktop/msc/catanatron` and
 recorded in root `requirements.txt`. Verified at this commit: 281/281
-`bridge/tests` pass (2026-05-27). `soak.py` needs only fastcatan and runs in
+`EVAL/bridge/tests` pass (2026-05-27). `soak.py` needs only fastcatan and runs in
 either env. See `REPRODUCIBILITY.md` §6 for why the pin must be a commit (newer
 builds move `models.tiles` → `models.map` and break bridge import).
 
@@ -43,15 +43,15 @@ $AP -m models.train_ppo --num-envs 768 --total-steps 50_000_000 --run-name ppo_1
 
 # 2) Thesis gate (slow — AlphaBeta ~6.4 s/game unpruned, ~1.8 h/1000): vs Alpha-Beta.
 #    --no-trades is required: Catanatron's AlphaBeta crashes on P2P trade actions.
-PYTHONHASHSEED=0 $AP -m AB.tournament \
+PYTHONHASHSEED=0 PYTHONPATH=EVAL $AP -m AB.tournament \
     --ckpt models/checkpoints/ppo_1084_50m/ppo_final.zip \
     --games 1000 --opponent alphabeta --ab-depth 2 --ab-prune --seed 42 --no-trades
 
 # Smoke (seconds): vs random.
-$AP -m AB.tournament --games 20 --opponent random --ckpt models/checkpoints/ppo_1084_50m/ppo_final.zip
+PYTHONPATH=EVAL $AP -m AB.tournament --games 20 --opponent random --ckpt models/checkpoints/ppo_1084_50m/ppo_final.zip
 
 # 10^8 soak (~minutes at ~70k steps/s).
-$AP -m AB.soak --steps 100000000 --seed 7
+PYTHONPATH=EVAL $AP -m AB.soak --steps 100000000 --seed 7
 ```
 
 The evaluated model is a `--ckpt` flag — swap in any future M3 self-play

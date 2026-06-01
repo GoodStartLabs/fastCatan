@@ -28,4 +28,10 @@ cmake.source-dir = "."
 CMAKE_BUILD_TYPE = "Release"
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+# "." resolves fastcatan/native helpers; "EVAL" lets `import bridge` / `import AB`
+# resolve after the M4 eval code moved under EVAL/ (EVAL/bridge, EVAL/AB).
+pythonpath = [".", "EVAL"]
+# importlib mode: EVAL/bridge/tests and sim/tests both ship __init__.py, so the
+# legacy "prepend" importer maps both to a top-level `tests` package and they
+# collide when collected together. importlib imports by path, no collision.
+addopts = "--import-mode=importlib"

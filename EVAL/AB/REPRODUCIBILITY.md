@@ -58,8 +58,8 @@ The committed source defines the interface, confirmed by compiling the headers:
 | `NUM_PLAYERS` | 4 |
 | reward | sparse ±1 terminal (+1 learner win, −1 any non-win terminal) |
 
-`bridge/obs_encoder.py` and `ui/obs_decoder.py` mirror this 1084 layout;
-`bridge/tests/test_obs_identity.py` passes (encoder ↔ C++ `write_obs`,
+`EVAL/bridge/obs_encoder.py` and `ui/obs_decoder.py` mirror this 1084 layout;
+`EVAL/bridge/tests/test_obs_identity.py` passes (encoder ↔ C++ `write_obs`,
 bit-for-bit — verified, `results/validation_1084.md`).
 
 ## 5. Python environment — anaconda
@@ -95,13 +95,13 @@ pip install --no-build-isolation -e . --config-settings=editable.rebuild=true
 ## 6. Catanatron (the Alpha-Beta baseline) — NOT PyPI
 
 The thesis Alpha-Beta opponent is **Catanatron's** `AlphaBetaPlayer`, run inside
-Catanatron's reference engine via `bridge/`. The required version is **catanatron
+Catanatron's reference engine via `EVAL/bridge/`. The required version is **catanatron
 3.3.0**, a dev build that is **not on PyPI** (PyPI tops out at 3.2.1, a stripped
 core with no `AlphaBetaPlayer`, no `ValueFunctionPlayer`, no domestic trades).
 
 - **Pinned commit: `41ba0db`** ("deterministic discards", #362). This is the
   commit the local clone `/home/sinan/Desktop/msc/catanatron` sits on and the
-  one the bridge is verified against — **281/281 `bridge/tests` pass** (2026-05-27,
+  one the bridge is verified against — **281/281 `EVAL/bridge/tests` pass** (2026-05-27,
   anaconda env, against the 1084/286 build). Installed editable:
   `pip install -e "/home/sinan/Desktop/msc/catanatron[gym]"`.
 - The pin is recorded in the repo at **`requirements.txt`** (root):
@@ -134,7 +134,7 @@ internal deadline; default depth 2.
   opponent/random-policy RNG.
 - **`PYTHONHASHSEED` must be set in the environment before launch** for
   catanatron runs — `RandomPlayer` (`random.choice`) and set-iteration order
-  depend on it (`bridge/PLAN.md`). The tournament warns if it is unset.
+  depend on it (`EVAL/bridge/PLAN.md`). The tournament warns if it is unset.
 
 ## 8. Commands (anaconda env)
 
@@ -146,14 +146,14 @@ $AP -m models.train_ppo --num-envs 768 --total-steps 50_000_000 --run-name ppo_1
 # (>=30M for gate margin; 50M is the verified M2/M3 seed. See training notes below.)
 
 # Thesis gate: final model vs Alpha-Beta, >=1000 games, win rate + 95% CI.
-PYTHONHASHSEED=0 $AP -m AB.tournament \
+PYTHONHASHSEED=0 PYTHONPATH=EVAL $AP -m AB.tournament \
     --ckpt models/checkpoints/ppo_1084_50m/ppo_final.zip \
     --games 1000 --opponent alphabeta --ab-depth 2 --ab-prune --seed 42 --no-trades
-# GATE: 95% Wilson CI lower bound > 0.25.  Result JSON -> AB/results/.
+# GATE: 95% Wilson CI lower bound > 0.25.  Result JSON -> EVAL/AB/results/.
 # Cost: AlphaBeta ~6.4 s/game unpruned (~1.8 h / 1000 games); --ab-prune cuts it.
 
 # 10^8-step stability soak (no catanatron needed).
-$AP -m AB.soak --steps 100000000 --seed 7
+PYTHONPATH=EVAL $AP -m AB.soak --steps 100000000 --seed 7
 # PASS iff: no exception, all obs finite, every action legal, RSS growth < 1.5x.
 ```
 
@@ -195,7 +195,7 @@ uniform-random-legal seats.
 
 - **Interface match is mandatory.** Before any eval/train, check
   `fastcatan.OBS_SIZE` vs the checkpoint's `observation_space.shape[0]`.
-  `AB/policy.py` raises on mismatch — a checkpoint trained against a different
+  `EVAL/AB/policy.py` raises on mismatch — a checkpoint trained against a different
   obs/action dim than the live build will not load.
 - AlphaBetaPlayer has a **20s/move** deadline. At depth 2 with `--ab-prune` a
   1000-game run is tractable; unpruned is ~6.4 s/game. The JSON records
@@ -205,4 +205,4 @@ uniform-random-legal seats.
   via `_COMPOSE_LOOP_CAP`, but sampling is the validated mode.
 - Catanatron's longest-road is internally inconsistent on road cuts; fastcatan is
   rule-correct. The ≤1–2% differential residual is documented and exempted in
-  `bridge/tests/test_differential.py` — it does not affect tournament outcomes.
+  `EVAL/bridge/tests/test_differential.py` — it does not affect tournament outcomes.

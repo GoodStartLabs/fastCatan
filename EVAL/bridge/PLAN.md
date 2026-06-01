@@ -1,4 +1,4 @@
-# bridge/ — Catanatron interop + cross-engine correctness
+# EVAL/bridge/ — Catanatron interop + cross-engine correctness
 
 Catanatron is the **ground-truth oracle**. This package (a) lets a fastcatan-
 trained policy play inside Catanatron for thesis eval (M4), and (b) proves
