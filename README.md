@@ -36,12 +36,10 @@ GPU loop the cost shifts further to obs encode + CPU→GPU transfer).
 ```bash
 git clone <repo> fastcatan
 cd fastcatan
-python3 -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate      # use CPython 3.12
 pip install -U pip
-pip install cmake ninja nanobind scikit-build-core    # build deps
+pip install -r requirements.txt                         # all pinned deps: build toolchain, training, eval, catanatron
 pip install -e . --no-build-isolation --config-settings=editable.rebuild=true  # build + auto-rebuild on source edits
-pip install torch sb3-contrib stable-baselines3         # for training
-pip install -r requirements.txt                         # catanatron (pinned) for the EVAL/bridge/eval path
 ```
 
 > `editable.rebuild=true` makes scikit-build-core recompile the extension on the

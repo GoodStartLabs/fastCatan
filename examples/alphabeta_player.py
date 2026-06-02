@@ -135,3 +135,37 @@ class AlphaBetaPlayer(Player):
 
     def __repr__(self) -> str:
         return f"AlphaBetaPlayer(depth={self.depth})"
+
+
+class NativeAlphaBetaPlayer(Player):
+    """Faithful Catanatron AlphaBetaPlayer, run by the C++ engine.
+
+    Unlike ``AlphaBetaPlayer`` above (a simplified Python minimax kept as a
+    lightweight baseline), this delegates to the native expectimax search
+    (``Env.ab_decide``, src/catan/search.cpp), whose value function matches
+    Catanatron's ``base_fn`` to machine precision — see
+    EVAL/AB/test_native_ab_fidelity.py. ``depth=2, prune=False`` reproduces
+    Catanatron's AlphaBetaPlayer defaults; ``depth=1`` is its ValueFunctionPlayer.
+    """
+
+    name = "alphabeta_native"
+
+    def __init__(self, seed: int = 0, forbid: np.ndarray | None = None,
+                 depth: int = ALPHABETA_DEFAULT_DEPTH, prune: bool = False):
+        super().__init__(seed=seed, forbid=forbid)
+        self.depth = int(depth)
+        self.prune = bool(prune)
+
+    def act(self, env, mask: np.ndarray) -> int:
+        a = env.ab_decide(env.current_player, self.depth, self.prune)
+        if a == 0xFFFFFFFF:  # no legal action seen (shouldn't happen)
+            return legal_actions(mask)[0]
+        if self.forbid is not None and (int(self.forbid[a >> 6]) >> (a & 63)) & 1:
+            # Native search ignores `forbid` (e.g. p2p-trade suppression); if it
+            # lands on a forbidden action, fall back to a random allowed one.
+            allowed = legal_actions(mask & ~self.forbid)
+            return self.rng.choice(allowed) if allowed else a
+        return a
+
+    def __repr__(self) -> str:
+        return f"NativeAlphaBetaPlayer(depth={self.depth},prune={self.prune})"

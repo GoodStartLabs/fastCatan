@@ -144,9 +144,10 @@ def _main(argv: list[str]) -> int:
 
     from player_base import build_p2p_trade_filter  # type: ignore
     from random_player import RandomPlayer  # type: ignore
-    from alphabeta_player import AlphaBetaPlayer  # type: ignore
+    from alphabeta_player import AlphaBetaPlayer, NativeAlphaBetaPlayer  # type: ignore
 
-    registry = {"random": RandomPlayer, "alphabeta": AlphaBetaPlayer}
+    registry = {"random": RandomPlayer, "alphabeta": AlphaBetaPlayer,
+                "alphabeta_native": NativeAlphaBetaPlayer}
     names = [n.strip() for n in args.players.split(",")]
     if len(names) == 1:
         names = names * 4

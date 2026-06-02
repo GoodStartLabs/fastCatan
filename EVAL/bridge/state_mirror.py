@@ -61,6 +61,7 @@ class CGameState(ctypes.Structure):
         # --- Turn / phase state ---
         ("dice_roll", U8),
         ("turn_count", U16),          # offset 128, 2-aligned naturally
+        ("trade_compose_count", U8),  # state.hpp: per-turn p2p-compose budget
         ("phase", U8),
         ("flag", U8),
         ("start_player", U8),
@@ -96,8 +97,8 @@ class CGameState(ctypes.Structure):
         ("trade_want", U8 * 5),
         ("trade_response", U8),
         ("trade_proposer", U8),
-        # ends at offset 265; RNG (uint32) needs 4-byte alignment -> pad 3
-        ("_pad_rng", U8 * 3),
+        # ends at offset 266; RNG (uint32) needs 4-byte alignment -> pad 2
+        ("_pad_rng", U8 * 2),
         ("rng", U32 * 4),             # offset 268, 16 bytes -> 284
         # action_mask (uint64) needs 8-byte alignment -> pad 4
         ("_pad_mask", U8 * 4),

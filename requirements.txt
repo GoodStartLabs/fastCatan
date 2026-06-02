@@ -1,1 +1,51 @@
+# fastCatan — pinned Python dependencies (cross-platform: macOS + Linux).
+#
+# Versions captured from the known-good Linux/anaconda env (CPython 3.12,
+# numpy 1.26). Install this SAME set on every machine so trained checkpoints and
+# the native build stay compatible across macOS and Linux.
+#
+# Setup (any platform):
+#   python3 -m venv .venv && source .venv/bin/activate   # use CPython 3.12
+#   pip install -U pip
+#   pip install -r requirements.txt
+#   pip install -e . --no-build-isolation --config-settings=editable.rebuild=true
+#
+# Use CPython 3.12: the native extension builds as cp312, and SB3 checkpoints are
+# interpreter-version-sensitive.
+#
+# !!! numpy is pinned to 1.26.x ON PURPOSE. Checkpoints pickled under numpy 2.x do
+# NOT load under numpy 1.x (the numpy._core rename + BitGenerator / gym-Space
+# pickle breakage) and vice-versa. If you ever bump numpy, do it on BOTH machines
+# at once and re-save every checkpoint. (This is exactly what bit the shaped
+# checkpoints trained on the Mac under numpy 2.x.)
+
+# --- native build toolchain ---
+# In-env on purpose: we build with --no-build-isolation, and editable.rebuild=true
+# recompiles the C++ extension on `import fastcatan` after any source change, so
+# these must be present in the runtime environment (not just an isolated build).
+scikit-build-core==0.12.2
+nanobind==2.12.0
+cmake==4.3.2
+ninja==1.13.0
+
+# --- RL training + eval runtime ---
+numpy==1.26.4
+torch==2.5.1            # installed here as 2.5.1+cu124 (CUDA 12.4); the bare pin lets
+                        # macOS resolve its own (MPS/CPU) wheel. On a CUDA box, force it:
+                        #   pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+stable-baselines3==2.7.0
+sb3-contrib==2.7.1
+gymnasium==0.29.1
+cloudpickle==2.2.1      # SB3 pickles gym spaces / lr schedules with this — keep pinned for checkpoint compat
+
+# --- logging / progress / debug viewer ---
+tensorboard==2.19.0
+tqdm==4.66.4
+rich==13.3.5
+matplotlib==3.8.4       # DEBUG/ board render + replay viewer
+
+# --- M4 eval: Catanatron AlphaBeta opponent (pinned git build, not the PyPI release) ---
 catanatron[gym] @ git+https://github.com/bcollazo/catanatron.git@41ba0db
+
+# --- dev / tests ---
+pytest==9.0.2

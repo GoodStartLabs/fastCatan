@@ -11,6 +11,19 @@ namespace catan {
     void step_one(GameState& s, const BoardLayout& b,
                   uint32_t action, float& reward, uint8_t& done) noexcept;
 
+    // Max (state, proba) outcomes expand_action emits: the 11 dice sums 2..12.
+    inline constexpr int MAX_EXPAND_OUTCOMES = 11;
+
+    // Expectimax expansion used by the alpha-beta search. Writes the weighted
+    // child states of applying `action` to (s,b) into out_states / out_probas
+    // (caller arrays sized >= MAX_EXPAND_OUTCOMES). Deterministic actions yield
+    // one outcome (proba 1); ROLL_DICE, BUY_DEV and robber-steal fan out over
+    // their chance outcomes. Each child gets a freshly recomputed action mask
+    // and phase, so a search can recurse on it directly. `action` must be legal
+    // in `s`. Returns the number of outcomes written. Probabilities sum to 1.
+    int expand_action(const GameState& s, const BoardLayout& b, uint32_t action,
+                      GameState* out_states, double* out_probas) noexcept;
+
     // Action ID layout
     namespace action {
         inline constexpr uint32_t SETTLE_BASE      = 0;    // [0, 54)

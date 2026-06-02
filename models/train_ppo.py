@@ -29,15 +29,19 @@ def _mask_fn(env):
     return env.action_masks()
 
 
-def _make_env(seed: int, shaped: bool, shaping_coef: float, gamma: float):
+def _make_env(
+    seed: int, shaped: bool, shaping_coef: float, gamma: float,
+    opponent: str, ab_depth: int, ab_prune: bool,
+):
     def _thunk():
         # VP-only potential shaping (models/env_shaped.py) when --shaped; its
         # gamma must match the PPO gamma so the shaping discount matches the
         # learner's return. Else the bare sparse-terminal env.
+        opp = dict(opponent=opponent, ab_depth=ab_depth, ab_prune=ab_prune)
         if shaped:
-            e = VPShapedEnv(seed=seed, shaping_coef=shaping_coef, gamma=gamma)
+            e = VPShapedEnv(seed=seed, shaping_coef=shaping_coef, gamma=gamma, **opp)
         else:
-            e = FastCatanEnv(seed=seed)
+            e = FastCatanEnv(seed=seed, **opp)
         e = ActionMasker(e, _mask_fn)
         # Monitor records episode reward/length so SB3 logs rollout/ep_rew_mean
         # and ep_len_mean — without it you cannot see whether the agent learns
@@ -50,8 +54,10 @@ def _make_env(seed: int, shaped: bool, shaping_coef: float, gamma: float):
 def _build_vec_env(
     num_envs: int, base_seed: int, use_subproc: bool,
     shaped: bool, shaping_coef: float, gamma: float,
+    opponent: str, ab_depth: int, ab_prune: bool,
 ):
-    fns = [_make_env(base_seed + i, shaped, shaping_coef, gamma)
+    fns = [_make_env(base_seed + i, shaped, shaping_coef, gamma,
+                     opponent, ab_depth, ab_prune)
            for i in range(num_envs)]
     if use_subproc and num_envs > 1:
         return SubprocVecEnv(fns)
@@ -85,6 +91,19 @@ def main() -> None:
                    help="Use SubprocVecEnv (multi-process). Default is DummyVecEnv: "
                         "the C++ sim is cheap enough (~50 ns/step) that per-step "
                         "cross-process obs pickling usually costs more than the step.")
+    p.add_argument("--opponent", type=str, default="random",
+                   choices=["random", "alphabeta"],
+                   help="Policy for seats 1-3. 'random' (default) or 'alphabeta' "
+                        "(native Catanatron-AlphaBeta port via Env.ab_decide) to "
+                        "train directly against the M4 eval opponent. AlphaBeta is "
+                        "far slower per step than random — lower --num-envs and/or "
+                        "use --ab-depth 1; see models/PLAN.md.")
+    p.add_argument("--ab-depth", type=int, default=2,
+                   help="AlphaBeta search depth when --opponent alphabeta "
+                        "(Catanatron default 2; 1 = ValueFunctionPlayer, ~3x faster).")
+    p.add_argument("--ab-prune", action="store_true",
+                   help="Enable AlphaBeta action pruning (most-impactful robber + "
+                        "1-tile initial settlements) for a faster, narrower search.")
     p.add_argument("--shaped", action="store_true",
                    help="Use VPShapedEnv (models/env_shaped.py): VP-only potential "
                         "shaping on top of the sparse +1/-1/-2 terminal. gamma is "
@@ -110,6 +129,7 @@ def main() -> None:
     env = _build_vec_env(
         args.num_envs, args.seed, use_subproc=args.subproc,
         shaped=args.shaped, shaping_coef=args.shaping_coef, gamma=args.gamma,
+        opponent=args.opponent, ab_depth=args.ab_depth, ab_prune=args.ab_prune,
     )
 
     model = MaskablePPO(
@@ -140,7 +160,10 @@ def main() -> None:
                   f"{args.init_from}? net_arch={net_arch}): "
                   f"{type(e).__name__}: {str(e)[:140]} -> training from scratch")
 
-    print(f"[train] run={args.run_name} net_arch={net_arch} "
+    opp_desc = args.opponent + (
+        f"(depth={args.ab_depth},prune={args.ab_prune})"
+        if args.opponent == "alphabeta" else "")
+    print(f"[train] run={args.run_name} net_arch={net_arch} opponent={opp_desc} "
           f"num_envs={args.num_envs} total_steps={args.total_steps} lr={args.lr} "
           f"shaped={args.shaped} coef={args.shaping_coef if args.shaped else None}")
 

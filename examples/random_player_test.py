@@ -8,12 +8,13 @@ import numpy as np
 import fastcatan
 from player_base import build_p2p_trade_filter
 from random_player import RandomPlayer
-from alphabeta_player import AlphaBetaPlayer
+from alphabeta_player import AlphaBetaPlayer, NativeAlphaBetaPlayer
 
 
 PLAYER_REGISTRY = {
     "random": RandomPlayer,
     "alphabeta": AlphaBetaPlayer,
+    "alphabeta_native": NativeAlphaBetaPlayer,
 }
 
 def make_players(spec: str, seed: int, forbid):

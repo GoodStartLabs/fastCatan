@@ -7,6 +7,51 @@ games, 95% CI** (`PLAN.md` M4, root). 0.25 is the 4-player chance baseline.
 The agent plays through `EVAL/bridge/CatanatronBridge` *inside Catanatron's reference
 engine*, so the numbers are directly comparable to Catanatron paper baselines.
 
+## Native AlphaBeta — a fast, faithful training opponent
+
+The eval above runs Catanatron's **real** AlphaBeta through the bridge (~6.4 s/game,
+crashes on P2P trades) — fine for the final gate, far too slow to *train* against.
+So the same player is ported natively into the fastcatan C++ engine
+(`src/catan/search.cpp`, `include/search.hpp`), exposed as:
+
+```python
+env = fastcatan.Env(); env.reset(seed)
+env.ab_decide(pov, depth=2, prune=False)   # -> best flat action id (0xFFFFFFFF if none)
+env.ab_value(pov)                          # -> Catanatron base_fn heuristic value
+```
+
+It is a faithful port of `catanatron.players.minimax.AlphaBetaPlayer`
+(depth-2 expectimax over dice / dev-draw / robber-steal chance nodes, alpha-beta,
+`list_prunned_actions`) + `value.base_fn` (`DEFAULT_WEIGHTS`). The engine refactor
+that makes the chance forks possible is `rules.cpp::expand_action`
+(forced-outcome cores split out of the RNG handlers; the RNG sim path stays
+byte-identical — perft hash unchanged).
+
+**Fidelity (validated, `test_native_ab_fidelity.py`, run via the bridge):**
+- `ab_value` == `base_fn(DEFAULT_WEIGHTS)` to **machine precision** (worst rel
+  error 1.9e-16 over 4800 state×seat pairs; exact in MAIN phase).
+- On deterministic 1:1-action decisions, Catanatron's depth-1 pick achieves
+  **exactly** fastcatan's best value (100 %) — every raw move difference is a
+  pure value tie (different tie-break order).
+- Two deliberate, documented deviations (both *more* correct than the
+  reference): BUY_DEV forks the true remaining deck; robber-steal forks the
+  victim's real hand (Catanatron uses an info-set blur / flat 1/5).
+
+**Train against it** (`models/env.py`, `models/train_ppo.py`):
+
+```bash
+python -m models.train_ppo --opponent alphabeta --ab-depth 1 --num-envs 768 ...
+```
+
+Throughput (single env): `random` ~51k learner-steps/s, **depth-1 ~45k**
+(≈ Catanatron `ValueFunctionPlayer`, nearly free and already crushes a random
+learner), depth-2 ~5k (~10× slower). Depth-1 is the recommended training
+opponent; bump to depth-2 / `--ab-prune` for a stronger curriculum. This is the
+"opponent-in-pool" lever for the M4-blocked-on-M3 gap.
+
+Pure-engine checks live in `tests/test_alphabeta.py`; the catanatron-fidelity
+gate in `test_native_ab_fidelity.py` (this dir).
+
 ## Files
 
 | File | Role |

@@ -23,6 +23,13 @@ the section they need.
 > - **No `fastcatan` shared lib / ctypes shim.** CMake builds `fastcatan_core`
 >   (static), `bench_step`, `bench_batched`, and `_fastcatan` (nanobind, gated on
 >   `SKBUILD`).
+> - **Native AlphaBeta lives in the C++ core**: `src/catan/search.cpp` +
+>   `include/search.hpp` (a faithful Catanatron `AlphaBetaPlayer` + `base_fn`
+>   port), exposed as `Env.ab_decide(pov, depth, prune)` / `Env.ab_value(pov)`,
+>   built on `rules.cpp::expand_action` (expectimax chance forks). Train against
+>   it via `models/train_ppo.py --opponent alphabeta`. Fidelity + usage:
+>   `EVAL/AB/README.md`; tests: `tests/test_alphabeta.py` (pure) +
+>   `EVAL/AB/test_native_ab_fidelity.py` (vs catanatron via the bridge).
 > - **RL training** = `models/train_{ppo,a2c,dqn,muzero}.py` over `models/env.py`
 >   (single-env + SB3 `DummyVecEnv` by default), **not** a `BatchedEnv` VecEnv.
 >   See `models/PLAN.md`'s status block for PPO reality, the reward design, and

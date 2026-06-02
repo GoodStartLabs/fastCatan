@@ -43,9 +43,17 @@ class VPShapedEnv(FastCatanEnv):
     """FastCatanEnv + potential-based shaping on the learner's own VP."""
 
     def __init__(
-        self, seed: int = 0, shaping_coef: float = 0.1, gamma: float = 0.999
+        self,
+        seed: int = 0,
+        shaping_coef: float = 0.1,
+        gamma: float = 0.999,
+        opponent: str = "random",
+        ab_depth: int = 2,
+        ab_prune: bool = False,
     ):
-        super().__init__(seed=seed)
+        super().__init__(
+            seed=seed, opponent=opponent, ab_depth=ab_depth, ab_prune=ab_prune
+        )
         self._coef = float(shaping_coef)
         self._gamma = float(gamma)
         self._prev_phi = 0.0

@@ -71,11 +71,26 @@ def _legal_action_ids(mask_words: np.ndarray) -> list[int]:
 
 
 class FastCatanEnv(gym.Env):
-    """Single-agent Catan env, learner = seat 0, opponents = random."""
+    """Single-agent Catan env, learner = seat 0; opponents pluggable.
+
+    ``opponent`` selects the policy driving seats 1-3:
+      - ``"random"``    — uniform random legal action (default; fastest).
+      - ``"alphabeta"`` — the native expectimax alpha-beta (a faithful
+        Catanatron AlphaBetaPlayer port, ``Env.ab_decide``), so the learner
+        trains directly against the M4 eval opponent instead of random play.
+        ``ab_depth`` (Catanatron default 2) and ``ab_prune`` tune it; depth 1
+        is ~3x faster and equals Catanatron's ValueFunctionPlayer.
+    """
 
     metadata = {"render_modes": []}
 
-    def __init__(self, seed: int = 0):
+    def __init__(
+        self,
+        seed: int = 0,
+        opponent: str = "random",
+        ab_depth: int = 2,
+        ab_prune: bool = False,
+    ):
         super().__init__()
         self._env = fastcatan.Env()
         self._seed_seq = random.Random(seed)
@@ -83,6 +98,9 @@ class FastCatanEnv(gym.Env):
         self._obs_buf = np.zeros(OBS_SIZE, dtype=np.float32)
         self._mask_buf = np.zeros(MASK_WORDS, dtype=np.uint64)
         self._ep_steps = 0
+        self._opponent = str(opponent)
+        self._ab_depth = int(ab_depth)
+        self._ab_prune = bool(ab_prune)
 
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(OBS_SIZE,), dtype=np.float32
@@ -108,6 +126,21 @@ class FastCatanEnv(gym.Env):
         # learns to close games out. See TIE_REWARD note above.
         return TIE_REWARD
 
+    def _opponent_action(self, legal: list[int]) -> int:
+        """Pick the acting opponent seat's action per the configured policy."""
+        if self._opponent == "alphabeta":
+            a = self._env.ab_decide(
+                self._env.current_player, self._ab_depth, self._ab_prune
+            )
+            # ab_decide recomputes the live mask, so its pick is normally in
+            # `legal`. It returns 0xFFFFFFFF if it sees no legal action; and in a
+            # cross-seat forced sub-phase (e.g. a discard the learner owes on an
+            # opponent's 7) the search's seat-relative pick can fall outside the
+            # acting seat's set. Fall back to random so the sim always advances.
+            if a != 0xFFFFFFFF and a in legal:
+                return a
+        return self._rng.choice(legal)
+
     def _step_opponents(self) -> tuple[bool, float]:
         """Advance the sim until current_player == LEARNER_SEAT or terminal.
 
@@ -119,7 +152,7 @@ class FastCatanEnv(gym.Env):
             if not legal:
                 # No legal actions — should not happen; treat as terminal.
                 return True, self._terminal_reward()
-            action = self._rng.choice(legal)
+            action = self._opponent_action(legal)
             _, done = self._env.step(action)
             if done:
                 return True, self._terminal_reward()
@@ -173,10 +206,17 @@ class FastCatanEnv(gym.Env):
         return _unpack_mask(self._read_mask())
 
 
-def make_env(seed: int = 0):
+def make_env(
+    seed: int = 0,
+    opponent: str = "random",
+    ab_depth: int = 2,
+    ab_prune: bool = False,
+):
     """Factory for SB3 make_vec_env / SubprocVecEnv."""
 
     def _thunk():
-        return FastCatanEnv(seed=seed)
+        return FastCatanEnv(
+            seed=seed, opponent=opponent, ab_depth=ab_depth, ab_prune=ab_prune
+        )
 
     return _thunk

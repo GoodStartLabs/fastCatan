@@ -12,6 +12,7 @@
 #include "mask.hpp"
 #include "obs.hpp"
 #include "batched_env.hpp"
+#include "search.hpp"
 
 namespace nb = nanobind;
 using namespace catan;
@@ -79,6 +80,17 @@ struct PyEnv {
             throw std::runtime_error("snapshot size mismatch");
         std::memcpy(&s, data.c_str(), sizeof(GameState));
         std::memcpy(&b, data.c_str() + sizeof(GameState), sizeof(BoardLayout));
+    }
+
+    // Overwrite the env's internal RNG from a 64-bit seed. The rng lives INSIDE
+    // GameState (state.hpp), so snapshot() captures it and load_snapshot()
+    // restores it byte-for-byte — meaning a load+step(ROLL_DICE) replays the
+    // SAME dice every time. MCTS calls reseed() after load_snapshot to resample
+    // chance (dice/dev-draw/robber-steal) per simulation, turning the search
+    // into a correct stochastic-MCTS that averages over the dice distribution
+    // instead of optimizing against one predetermined roll.
+    void reseed(uint64_t seed) noexcept {
+        xoshiro_seed(s.rng, seed);
     }
 
     // Read the cached action_mask bits into a uint64 buffer of length MASK_WORDS.
@@ -216,13 +228,36 @@ Determinism: same seed -> same trajectory. Perft hashes pinned.
         .def("load_snapshot", &PyEnv::load_snapshot, nb::arg("data"),
              "Restore from bytes produced by ``snapshot`` or "
              "``BatchedEnv.snapshot``.")
+        .def("reseed", &PyEnv::reseed, nb::arg("seed"),
+             "Reseed the internal RNG from a 64-bit key. The RNG is part of "
+             "GameState, so snapshot/load_snapshot round-trip it verbatim and a "
+             "restored state replays identical dice. AlphaZero MCTS calls this "
+             "after load_snapshot to resample chance (dice/dev/steal) per "
+             "simulation. No effect on deterministic actions.")
         .def("action_mask", &PyEnv::action_mask, nb::arg("out"),
              "Read the incrementally-maintained action mask into the "
              "provided uint64 buffer of length MASK_WORDS.")
         .def("write_obs", &PyEnv::write_obs,
              nb::arg("pov"), nb::arg("out"),
              "Write obs from ``pov`` (player 0..3) into the provided "
-             "float32 buffer of length OBS_SIZE.");
+             "float32 buffer of length OBS_SIZE.")
+        // --- Native expectimax alpha-beta (faithful Catanatron port) ---
+        .def("ab_decide",
+             [](const PyEnv& e, uint8_t pov, int depth, bool prune) {
+                 return ab_decide(e.s, e.b, pov, depth, prune, nullptr);
+             },
+             nb::arg("pov"), nb::arg("depth") = 2, nb::arg("prune") = false,
+             "Pick ``pov``'s best action via depth-limited expectimax "
+             "alpha-beta (Catanatron AlphaBetaPlayer port, DEFAULT_WEIGHTS). "
+             "Reads the live state; does not mutate it. Returns a flat action "
+             "ID, or 0xFFFFFFFF if there is no legal action.")
+        .def("ab_value",
+             [](const PyEnv& e, uint8_t pov) {
+                 return ab_value(e.s, e.b, pov, nullptr);
+             },
+             nb::arg("pov"),
+             "Catanatron base_fn heuristic value of the current state from "
+             "``pov``'s seat (DEFAULT_WEIGHTS). Pure; used for validation.");
 
     // --- BatchedEnv: hot path ---
     using ArrU32 = nb::ndarray<uint32_t, nb::ndim<1>, nb::c_contig, nb::device::cpu>;

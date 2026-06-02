@@ -27,6 +27,7 @@ add_library(fastcatan_core STATIC
     src/catan/rules.cpp
     src/catan/obs.cpp
     src/catan/batched_env.cpp
+    src/catan/search.cpp
 )
 target_include_directories(fastcatan_core PUBLIC include)
 target_compile_options(fastcatan_core PRIVATE
