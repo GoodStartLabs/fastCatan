@@ -78,6 +78,11 @@ print(f"phase={env.phase}, current_player={env.current_player}")
 
 # Pick a legal action and step.
 reward, done = env.step(fc.action.SETTLE_BASE + 5)   # build settlement at node 5
+
+# Native expectimax Alpha-Beta (a faithful Catanatron AlphaBetaPlayer port,
+# in C++): pick the current player's best move, or score a seat's position.
+best = env.ab_decide(env.current_player, depth=2, prune=False)
+val  = env.ab_value(env.current_player)
 ```
 
 ### Batched env (the hot path)
@@ -139,11 +144,17 @@ for agent in env.agent_iter():
 ### Training with MaskablePPO
 
 ```bash
+# vs random opponents (M2 gate)
 python3 -m models.train_ppo --num-envs 64 --total-steps 100_000
+
+# vs the native Alpha-Beta opponent (the M4 eval bot, in-engine and fast)
+python3 -m models.train_ppo --opponent alphabeta --ab-depth 1 --num-envs 768 ...
 ```
 
 See [`models/PLAN.md`](models/PLAN.md) for the trainers (PPO + A2C/DQN/MuZero
-references) and `models/env.py` for the single-agent Gym wrapper.
+references) and `models/env.py` for the single-agent Gym wrapper. The
+`--opponent alphabeta` path and its fidelity to Catanatron are documented in
+[`EVAL/AB/README.md`](EVAL/AB/README.md).
 
 ## Key concepts
 
@@ -215,13 +226,14 @@ guarded by `tests/test_determinism.py`.
 ## Repo layout
 
 ```
-include/                 public headers (state, rules, mask, obs, batched_env, rng, topology)
-src/catan/               core C++ implementation
+include/                 public headers (state, rules, mask, obs, batched_env, rng, topology, search)
+src/catan/               core C++ implementation (rules, obs, batched_env, search=native Alpha-Beta)
 bindings/pycatan/        nanobind module
 python/fastcatan/        Python package (re-exports + Gym/PettingZoo wrappers)
-tests/                   Python correctness tests (invariants, scenarios, determinism, mask)
+tests/                   Python correctness tests (invariants, scenarios, determinism, mask, alphabeta)
 tests/fuzz_invariants.cpp  10⁷-game C++ invariant fuzz gate (ctest -R invariants; see PLAN.md M1)
 EVAL/bridge/                  Catanatron interop + cross-engine differential (see EVAL/bridge/PLAN.md)
+EVAL/AB/                      M4 Alpha-Beta eval + native-AB fidelity gate (see EVAL/AB/README.md)
 models/                  RL trainers (PPO + A2C/DQN/MuZero) + Gym env (see models/PLAN.md)
 DEBUG/ui/                      obs decoder / board render / replay (see DEBUG/ui/PLAN.md)
 examples/                random + alpha-beta player references

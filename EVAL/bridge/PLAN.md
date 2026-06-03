@@ -71,3 +71,21 @@ worth it.
 
 `obs_encoder.py` `N_*` divisors MUST equal `src/catan/obs.cpp` `namespace norm`
 and `DEBUG/ui/obs_decoder.py` `N_*`. `test_obs_identity` guards this.
+
+## Gotcha: state_mirror layout must track GameState
+
+`state_mirror.py::CGameState` is a hand-laid byte mirror of the C++ `GameState`
+(`include/state.hpp`). **Any field add/reorder/resize there MUST be mirrored
+here** — update `_fields_` AND recompute the explicit pads (`_pad_rng` before
+the 4-aligned RNG, `_pad_mask` before the 8-aligned `action_mask`, `_pad_tail`
+to the 64-byte `alignas`). The 384-byte `assert` alone is **not** sufficient: a
++1-byte field can be absorbed by a −1 in a pad and stay 384 while every later
+field is silently misread.
+
+This drifted once (2026-06-02): the `trade_compose_count` field added by the
+"crazy refactor" was never mirrored, so `inject`/`load_snapshot` corrupted state
+from `phase` onward and `test_differential` failed 25/25 — silent until then.
+Fixed by adding the field + `_pad_rng` 3→2. `python state_mirror.py` runs the
+fast round-trip guard (`validate_against_env`); `test_differential` is the full
+gate. See memory `bridge-state-mirror-resync`. The native AlphaBeta fidelity
+tests (`EVAL/AB/test_native_ab_fidelity.py`) depend on this injection path.

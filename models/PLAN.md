@@ -56,6 +56,18 @@
 >   naming + fastcatan-vs-catanatron equal footing), `DEBUG/bench/bench_comprehensive.py`
 >   (distribution parity), `DEBUG/bench/bench_step.cpp` + `DEBUG/bench/bench_batched.cpp`
 >   (pure-C++ floor). Catanatron quirks: see [[catanatron-seat-shuffle]].
+> - **AlphaBeta training opponent (NEW 2026-06-02).** `train_ppo.py --opponent
+>   alphabeta [--ab-depth {1,2}] [--ab-prune]` drives seats 1-3 with the native C++
+>   expectimax AlphaBeta (`Env.ab_decide`) — a faithful catanatron `AlphaBetaPlayer`
+>   port whose value fn matches `base_fn` to **1.9e-16** ([[native-alphabeta-training-opponent]],
+>   `EVAL/AB/README.md`). So the learner trains **directly against the M4 eval
+>   opponent** instead of random — the *opponent-in-pool* lever for the 0/200 wall
+>   ([[m4-alphabeta-blocked-on-m3]]). `FastCatanEnv`/`VPShapedEnv` take the same
+>   `opponent=` arg. Throughput (single env): random ~51k steps/s, **depth-1 ~45k**
+>   (≈ catanatron ValueFunctionPlayer — nearly free, already 100% vs a random
+>   learner), depth-2 ~5k (~10× slower). **Use depth-1** as the workhorse;
+>   depth-2/`--ab-prune` for a harder curriculum. Whether this transfers to the M4
+>   bridge gate is the open question — now finally runnable.
 >
 > **M2 GATE: MET ✅** stall-cap fix → retrained 50M on the 1084/286 build
 > (`ppo_1084_50m`) → gate passed: **95.5%** vs random native (200g, sampling,
