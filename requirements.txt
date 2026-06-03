@@ -4,11 +4,14 @@
 # numpy 1.26). Install this SAME set on every machine so trained checkpoints and
 # the native build stay compatible across macOS and Linux.
 #
-# Setup (any platform):
-#   python3 -m venv .venv && source .venv/bin/activate   # use CPython 3.12
-#   pip install -U pip
-#   pip install -r requirements.txt
-#   pip install -e . --no-build-isolation --config-settings=editable.rebuild=true
+# Setup (any platform) — ONE command, see scripts/setup.sh:
+#   bash scripts/setup.sh                        # creates conda env `catan` (py3.12), installs this file, builds + verifies
+#   FASTCATAN_CUDA=cu124 bash scripts/setup.sh   # Linux CUDA box
+# Then: conda activate catan
+#
+# The interpreter is locked by conda (environment.yml: python=3.12), NOT by a bare
+# `python3 -m venv` — that inherits whatever python3 the box has and is exactly how
+# the Mac drifted to 3.13/numpy-2.x. Verify any device with: python scripts/check_env.py
 #
 # Use CPython 3.12: the native extension builds as cp312, and SB3 checkpoints are
 # interpreter-version-sensitive.

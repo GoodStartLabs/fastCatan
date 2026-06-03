@@ -31,6 +31,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from models.env import FastCatanEnv, NUM_ACTIONS, OBS_SIZE
+from models.ckpt import write_stamp
 
 
 CKPT_DIR = Path(__file__).resolve().parent / "checkpoints"
@@ -174,6 +175,7 @@ def main() -> None:
 
     final = save_dir / "dqn_final.pt"
     torch.save({"q_state": q.state_dict(), "args": vars(args)}, str(final))
+    write_stamp(final)
     print(f"[train] saved -> {final}")
 
 

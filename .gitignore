@@ -30,8 +30,10 @@ _deps/
 /random_test.csv
 models/checkpoints/ppo_512x512x256_50m/*
 !models/checkpoints/ppo_512x512x256_50m/ppo_final.zip
+!models/checkpoints/ppo_512x512x256_50m/ppo_final.zip.env.json
 models/checkpoints/sp_league_200m_512/*
 !models/checkpoints/sp_league_200m_512/selfplay_final.zip
+!models/checkpoints/sp_league_200m_512/selfplay_final.zip.env.json
 
 # tensorboard logs — filenames embed host/IP, not needed in repo
 **/tb/
