@@ -1,0 +1,22 @@
+# Canonical interpreter for fastCatan — IDENTICAL on every device (macOS + Linux).
+#
+# conda guarantees CPython 3.12 WITHOUT relying on a system python3.12 existing
+# (a bare `python3 -m venv` inherits whatever python3 is on the box — that is how
+# the Mac drifted to 3.13/numpy-2.x and broke checkpoint pickle compat).
+#
+# This file pins ONLY the interpreter. Everything else (numpy 1.26.4, torch, SB3,
+# catanatron) is pip-pinned in requirements.txt and installed by scripts/setup.sh.
+# See requirements.txt for WHY 3.12 + numpy 1.26.4 (native cp312 build + checkpoint
+# pickle compat).
+#
+# Prefer `bash scripts/setup.sh` — it creates the env with `--override-channels -c
+# conda-forge` to sidestep the Anaconda `defaults` commercial-ToS gate. A bare
+# `conda env create -f environment.yml` may fail on that gate if your global condarc
+# forces `defaults` (run `conda config --remove channels defaults` to clear it).
+name: catan
+channels:
+  - conda-forge
+  - nodefaults          # skip Anaconda `defaults` (pkgs/main, pkgs/r) — avoids their commercial ToS gate; conda-forge has python+pip
+dependencies:
+  - python=3.12
+  - pip

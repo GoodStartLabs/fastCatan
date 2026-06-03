@@ -15,6 +15,8 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
+from models.ckpt import verify_stamp
+
 
 @runtime_checkable
 class Opponent(Protocol):
@@ -65,6 +67,7 @@ class PolicyOpponent:
     ) -> "PolicyOpponent":
         from sb3_contrib import MaskablePPO
 
+        verify_stamp(path)
         model = MaskablePPO.load(str(path), device=device)
         return cls(model, name or Path(path).stem, deterministic)
 

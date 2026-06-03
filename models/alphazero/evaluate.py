@@ -22,6 +22,7 @@ import torch
 import fastcatan
 
 from models.alphazero.net import PolicyValueNet
+from models.ckpt import verify_stamp
 from models.alphazero.mcts import MCTS, _unpack, filter_p2p, p2p_trade_mask, MASK_WORDS
 from models.eval import wilson_ci
 
@@ -101,6 +102,7 @@ def main() -> None:
     ckpt = Path(args.ckpt)
     if not ckpt.exists():
         raise FileNotFoundError(ckpt)
+    verify_stamp(ckpt, strict=False)
     state = torch.load(str(ckpt), map_location=args.device, weights_only=False)
     net = PolicyValueNet().to(args.device)
     net.load_state_dict(state["net_state"])

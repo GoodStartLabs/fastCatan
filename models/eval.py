@@ -23,6 +23,7 @@ import numpy as np
 import torch
 
 from models.env import FastCatanEnv, NUM_ACTIONS
+from models.ckpt import verify_stamp
 
 
 PickAction = Callable[[np.ndarray, np.ndarray], int]
@@ -44,6 +45,7 @@ def wilson_ci(wins: int, n: int, z: float = 1.96) -> tuple[float, float]:
 
 def load_ppo(ckpt: Path, deterministic: bool) -> PickAction:
     from sb3_contrib import MaskablePPO
+    verify_stamp(ckpt)
     model = MaskablePPO.load(str(ckpt))
 
     def pick(obs: np.ndarray, mask: np.ndarray) -> int:
@@ -55,6 +57,7 @@ def load_ppo(ckpt: Path, deterministic: bool) -> PickAction:
 
 def load_dqn(ckpt: Path, deterministic: bool) -> PickAction:
     from models.train_dqn import QNet
+    verify_stamp(ckpt, strict=False)
     state = torch.load(str(ckpt), map_location="cpu", weights_only=False)
     q = QNet()
     q.load_state_dict(state["q_state"])
@@ -71,6 +74,7 @@ def load_dqn(ckpt: Path, deterministic: bool) -> PickAction:
 
 def load_a2c(ckpt: Path, deterministic: bool) -> PickAction:
     from models.train_a2c import ActorCritic, masked_categorical
+    verify_stamp(ckpt, strict=False)
     state = torch.load(str(ckpt), map_location="cpu", weights_only=False)
     net = ActorCritic()
     net.load_state_dict(state["net_state"])
@@ -92,6 +96,7 @@ def load_a2c(ckpt: Path, deterministic: bool) -> PickAction:
 
 def load_muzero(ckpt: Path, deterministic: bool, sims: int) -> PickAction:
     from models.train_muzero import MuZeroNets, run_mcts, visit_count_policy
+    verify_stamp(ckpt, strict=False)
     state = torch.load(str(ckpt), map_location="cpu", weights_only=False)
     nets = MuZeroNets()
     nets.load_state_dict(state["nets_state"])

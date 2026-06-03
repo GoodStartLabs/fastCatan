@@ -20,6 +20,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
 from models.env import FastCatanEnv
 from models.env_shaped import VPShapedEnv
+from models.ckpt import write_stamp
 
 
 CKPT_DIR = Path(__file__).resolve().parent / "checkpoints"
@@ -181,6 +182,7 @@ def main() -> None:
 
     final = save_dir / "ppo_final.zip"
     model.save(str(final))
+    write_stamp(final)
     print(f"[train] saved final model -> {final}")
 
 

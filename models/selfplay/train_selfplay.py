@@ -49,6 +49,7 @@ from models.selfplay.gate import gate_result, play_2v2
 from models.selfplay.league import League
 from models.selfplay.opponents import OpponentPool, PolicyOpponent
 from models.selfplay.selfplay_env import SelfPlayEnv
+from models.ckpt import write_stamp, verify_stamp
 
 
 CKPT_DIR = Path(__file__).resolve().parents[1] / "checkpoints"
@@ -321,6 +322,7 @@ def main() -> None:
                     sp, name=f"snap{i}", device=args.opponent_device), sp)
         # Load the latest snapshot for FULL state — weights, optimizer, AND
         # num_timesteps — so snapshot numbering continues instead of restarting.
+        verify_stamp(resume_snaps[-1])
         model = MaskablePPO.load(resume_snaps[-1], env=env)
         print(f"[selfplay] RESUMED from {resume_snaps[-1].name}: round "
               f"{start_round}/{args.num_rounds}, num_timesteps="
@@ -352,6 +354,7 @@ def main() -> None:
         )
 
         if args.init_from:
+            verify_stamp(args.init_from)  # numpy-major mismatch must hard-fail, not silently fall back to scratch
             # Weights only — keeps our swept lr/ent_coef. Arch must match the ckpt;
             # a swept --net-arch that differs will mismatch -> fall back to scratch.
             try:
@@ -397,6 +400,7 @@ def main() -> None:
 
         snap = save_dir / f"snap_{model.num_timesteps}.zip"
         model.save(snap)
+        write_stamp(snap)
         snap_paths.append(snap)
         pool.add_candidate(PolicyOpponent.load(
             snap, name=f"snap{rnd}", device=args.opponent_device), snap)
@@ -436,6 +440,7 @@ def main() -> None:
 
     final = save_dir / "selfplay_final.zip"
     model.save(final)
+    write_stamp(final)
 
     last_gate = gate_log[-1] if gate_log else None
     summary = {

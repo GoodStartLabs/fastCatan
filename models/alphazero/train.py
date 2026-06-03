@@ -25,6 +25,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from models.ckpt import write_stamp, verify_stamp
+
 CKPT_DIR = Path(__file__).resolve().parents[1] / "checkpoints"
 
 
@@ -185,6 +187,7 @@ def main() -> None:
     suppress = not args.allow_trades
     net = PolicyValueNet().to(args.device)
     if args.init_from:
+        verify_stamp(args.init_from, strict=False)
         state = torch.load(args.init_from, map_location=args.device, weights_only=False)
         net.load_state_dict(state["net_state"])
         print(f"[init] warm-started from {args.init_from}", flush=True)
@@ -328,9 +331,11 @@ def main() -> None:
                 ck = save_dir / f"az_it{it}.pt"
                 torch.save({"net_state": net.state_dict(), "args": vars(args),
                             "iter": it, "vs_ab_d1": wr}, str(ck))
+                write_stamp(ck)
 
     final = save_dir / "az_final.pt"
     torch.save({"net_state": net.state_dict(), "args": vars(args)}, str(final))
+    write_stamp(final)
     print(f"[done] {games_done} games in {time.time()-t0:.0f}s -> {final}", flush=True)
 
 

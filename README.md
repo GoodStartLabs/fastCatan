@@ -36,10 +36,19 @@ GPU loop the cost shifts further to obs encode + CPU→GPU transfer).
 ```bash
 git clone <repo> fastcatan
 cd fastcatan
-python3 -m venv .venv && source .venv/bin/activate      # use CPython 3.12
-pip install -U pip
-pip install -r requirements.txt                         # all pinned deps: build toolchain, training, eval, catanatron
-pip install -e . --no-build-isolation --config-settings=editable.rebuild=true  # build + auto-rebuild on source edits
+bash scripts/setup.sh           # conda env `catan` (CPython 3.12) + all pinned deps + native build + verify
+conda activate catan
+# Linux CUDA box:  FASTCATAN_CUDA=cu124 bash scripts/setup.sh
+```
+
+This is the **canonical, identical-on-every-device** path: conda pins the interpreter
+(`environment.yml`: python=3.12) so checkpoints + the native `cp312` build stay
+compatible across macOS and Linux. **Do not** use a bare `python3 -m venv` — it
+inherits whatever `python3` the box has (that is how a Mac drifts to 3.13/numpy-2.x
+and breaks checkpoint pickles). Verify any device at any time:
+
+```bash
+python scripts/check_env.py     # asserts py3.12 + numpy 1.26.4 + fastcatan/catanatron import; non-zero on drift
 ```
 
 > `editable.rebuild=true` makes scikit-build-core recompile the extension on the

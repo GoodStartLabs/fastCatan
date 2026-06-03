@@ -26,6 +26,7 @@ import torch.nn.functional as F
 import fastcatan
 
 from models.alphazero.net import PolicyValueNet, masked_log_softmax
+from models.ckpt import write_stamp
 from models.alphazero.mcts import (
     MCTS, _unpack, filter_p2p, p2p_trade_mask, MASK_WORDS, NUM_ACTIONS, OBS_SIZE,
 )
@@ -196,10 +197,12 @@ def main() -> None:
         if g % args.checkpoint_every == 0:
             ck = save_dir / f"az_{g}.pt"
             torch.save({"net_state": net.state_dict(), "args": vars(args)}, str(ck))
+            write_stamp(ck)
             print(f"[ckpt] {ck}", flush=True)
 
     final = save_dir / "az_final.pt"
     torch.save({"net_state": net.state_dict(), "args": vars(args)}, str(final))
+    write_stamp(final)
     print(f"[done] saved -> {final}", flush=True)
 
 
