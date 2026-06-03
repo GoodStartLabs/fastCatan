@@ -36,3 +36,4 @@ models/checkpoints/sp_league_200m_512/*
 # tensorboard logs — filenames embed host/IP, not needed in repo
 **/tb/
 *.out.tfevents.*
+models/checkpoints/seeds/2048-2048-1024/ppo_final.zip
