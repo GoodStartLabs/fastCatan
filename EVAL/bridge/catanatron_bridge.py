@@ -201,6 +201,15 @@ class CatanatronBridge(Player):
     # ------------------------------------------------------------------
 
     def _decide_move_robber(self, game: Game, move_robbers, color_to_seat):
+        # State-aware policies (AB/mcts_policy) own the whole composite
+        # (hex, victim) decision: they can step their mirrored env through
+        # the chosen hex and SEARCH the steal too. The obs-only two-call
+        # protocol below cannot give them a valid root for the victim
+        # sub-pick (the game state still has the robber un-moved), which
+        # silently degraded the victim choice to rng.choice.
+        if hasattr(self._policy, "decide_robber"):
+            return self._policy.decide_robber(game, move_robbers,
+                                              color_to_seat, self._rng)
         hex_to_actions: dict[tuple, list[Action]] = {}
         for a in move_robbers:
             coord = a.value[0]

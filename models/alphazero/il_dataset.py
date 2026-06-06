@@ -68,6 +68,7 @@ def _play_games_worker(payload: dict) -> dict:
 
     depth = payload["ab_depth"]
     prune = payload["ab_prune"]
+    chance_mode = payload.get("chance_mode", 0)
     rng = random.Random(payload["seed"])
     seed_seq = random.Random(payload["seed"] ^ 0x5EED)
     p2p = p2p_trade_mask()
@@ -109,7 +110,7 @@ def _play_games_worker(payload: dict) -> dict:
 
             if student is not None and cp != 0:
                 # DAgger: opponent seats are plain AB, not recorded.
-                a = env.ab_decide(cp, depth, prune, banned)
+                a = env.ab_decide(cp, depth, prune, banned, chance_mode)
                 if a == _NO_ACTION or a not in legal:
                     a = rng.choice(legal)
                     fallbacks += 1
@@ -118,7 +119,7 @@ def _play_games_worker(payload: dict) -> dict:
                     break
                 continue
 
-            teacher_a = env.ab_decide(cp, depth, prune, banned)
+            teacher_a = env.ab_decide(cp, depth, prune, banned, chance_mode)
             if teacher_a == _NO_ACTION or teacher_a not in legal:
                 teacher_a = rng.choice(legal)  # safety net; ~never (counted)
                 fallbacks += 1
@@ -173,6 +174,11 @@ def main() -> None:
     p.add_argument("--workers", type=int, default=8)
     p.add_argument("--ab-depth", type=int, default=1)
     p.add_argument("--ab-prune", action="store_true")
+    p.add_argument("--catanatron-chance", action="store_true",
+                   help="teacher uses Catanatron's chance blur + first-enemy "
+                        "robber pruner (rules.hpp CHANCE_CATANATRON) — clone "
+                        "the BRIDGE table's actual lines, not the native "
+                        "port's (their games differ; model_divergence.py).")
     p.add_argument("--out-dir", type=str, default="models/datasets/il_ab_d1")
     p.add_argument("--student-ckpt", type=str, default="",
                    help="DAgger mode: seat-0 acts with this net's argmax "
@@ -194,6 +200,7 @@ def main() -> None:
         "shard_id": i, "out_dir": str(out),
         "ab_depth": args.ab_depth, "ab_prune": args.ab_prune,
         "student_ckpt": args.student_ckpt or None,
+        "chance_mode": 1 if args.catanatron_chance else 0,
         "seed": args.seed * 1_000_003 + i * 7919, "nice": args.nice,
     } for i in range(n_shards)]
 
