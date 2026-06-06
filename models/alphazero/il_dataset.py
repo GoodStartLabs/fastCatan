@@ -24,6 +24,11 @@ to clone) and records every multi-legal decision:
                                 seat's ab_value margin (bit-for-bit the
                                 mcts_vs_fixed leaf_eval='ab_value' formula) —
                                 the distillation target for a learned judge
+    abm   float64               the RAW ab_value margin (own - best opponent,
+                                unsquashed; exact in f64) — lets the trainer
+                                recompute ANY squash/decomposition, e.g. the
+                                per-channel two-scale targets (the combined
+                                abv scalar is not invertible into its parts)
 
 Shards are compressed .npz, ~250 games each, written to --out-dir. Workers
 are separate processes (spawn) with their own Env; everything is CPU and
@@ -49,20 +54,23 @@ _NO_ACTION = 0xFFFFFFFF
 _VP_W = 3e14  # catanatron value.base_fn public-VP weight (lexicographic)
 
 
-def _abv_label(env, cp: int, scale: float) -> float:
+def _abv_label(env, cp: int, scale: float) -> tuple[float, float]:
     """The hybrid leaf value, mirroring MCTSvsFixed._expand leaf_eval='ab_value'.
 
     Margin of the acting seat's native ab_value over the best opponent,
     decomposed into the VP level and the fine level and squashed separately —
     keep this in lockstep with mcts_vs_fixed.py (the search must see at
-    deploy time exactly the function the value head was distilled on)."""
+    deploy time exactly the function the value head was distilled on).
+
+    Returns (squash, raw_margin)."""
     v0 = env.ab_value(cp)
     vo = max(env.ab_value(q) for q in range(4) if q != cp)
     margin = v0 - vo
     vp_part = np.round(margin / _VP_W)
     fine_part = margin - vp_part * _VP_W
-    return float(0.75 * np.tanh(vp_part / 3.0)
-                 + 0.25 * np.tanh(fine_part / scale))
+    return (float(0.75 * np.tanh(vp_part / 3.0)
+                  + 0.25 * np.tanh(fine_part / scale)),
+            float(margin))
 
 
 def _play_games_worker(payload: dict) -> dict:
@@ -110,7 +118,8 @@ def _play_games_worker(payload: dict) -> dict:
     obs_buf = np.zeros(fc.OBS_SIZE, dtype=np.float32)
 
     abv_scale = payload.get("abv_scale", 86e6)
-    obs_l, act_l, mask_l, z_l, vps_l, seat_l, abv_l = [], [], [], [], [], [], []
+    obs_l, act_l, mask_l, z_l, vps_l, seat_l = [], [], [], [], [], []
+    abv_l, abm_l = [], []
     fallbacks = 0
     decisions = 0
     winners = []
@@ -151,7 +160,9 @@ def _play_games_worker(payload: dict) -> dict:
             obs_l.append(obs_buf.astype(np.float16))
             act_l.append(np.uint16(teacher_a))
             mask_l.append(np.packbits(mask))
-            abv_l.append(np.float32(_abv_label(env, cp, abv_scale)))
+            squash, margin = _abv_label(env, cp, abv_scale)
+            abv_l.append(np.float32(squash))
+            abm_l.append(np.float64(margin))
             recs.append((len(obs_l) - 1, cp))
             decisions += 1
 
@@ -186,6 +197,7 @@ def _play_games_worker(payload: dict) -> dict:
         vps=np.stack(vps_l) if vps_l else np.zeros((0, 4), np.uint8),
         seat=np.asarray(seat_l, dtype=np.uint8),
         abv=np.asarray(abv_l, dtype=np.float32),
+        abm=np.asarray(abm_l, dtype=np.float64),
     )
     n_won = sum(1 for w in winners if w >= 0)
     return {"shard": str(shard), "games": len(winners), "decisions": decisions,

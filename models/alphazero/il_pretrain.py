@@ -36,6 +36,7 @@ from models.alphazero.net import PolicyValueNet
 OBS_SIZE = fastcatan.OBS_SIZE
 NUM_ACTIONS = fastcatan.NUM_ACTIONS
 MASK_BYTES = 36
+VP_W = 3e14  # catanatron lexicographic VP weight — lockstep with il_dataset
 
 CKPT_DIR = Path(__file__).resolve().parents[1] / "checkpoints"
 
@@ -66,17 +67,20 @@ def build_cache(data_dirs: list[Path]) -> dict:
         }
         if (cache / "abv.npy").exists():   # v3 shards (learned-judge labels)
             out["abv"] = np.lib.format.open_memmap(cache / "abv.npy", mode="r")
+        if (cache / "abm.npy").exists():   # v4 shards (raw ab_value margin)
+            out["abm"] = np.lib.format.open_memmap(cache / "abm.npy", mode="r")
         return out
     shards = sorted(s for d in data_dirs
                     for s in glob.glob(str(d / "shard_*.npz")))
     if not shards:
         raise FileNotFoundError(f"no shards under {data_dirs}")
     counts = []
-    has_abv = True
+    has_abv = has_abm = True
     for s in shards:
         with np.load(s) as d:
             counts.append(d["act"].shape[0])
             has_abv = has_abv and ("abv" in d.files)
+            has_abm = has_abm and ("abm" in d.files)
     n = int(sum(counts))
     cache.mkdir(exist_ok=True)
     obs = np.lib.format.open_memmap(cache / "obs.npy", mode="w+",
@@ -94,6 +98,9 @@ def build_cache(data_dirs: list[Path]) -> dict:
     abv = (np.lib.format.open_memmap(cache / "abv.npy", mode="w+",
                                      dtype=np.float32, shape=(n,))
            if has_abv else None)
+    abm = (np.lib.format.open_memmap(cache / "abm.npy", mode="w+",
+                                     dtype=np.float64, shape=(n,))
+           if has_abm else None)
     o = 0
     for s, c in zip(shards, counts):
         with np.load(s) as d:
@@ -105,18 +112,22 @@ def build_cache(data_dirs: list[Path]) -> dict:
             seat[o:o + c] = d["seat"]
             if abv is not None:
                 abv[o:o + c] = d["abv"]
+            if abm is not None:
+                abm[o:o + c] = d["abm"]
         o += c
         print(f"[cache] {o}/{n}", flush=True)
     obs.flush(); act.flush(); mask.flush(); z.flush()
     vps.flush(); seat.flush()
     if abv is not None:
         abv.flush()
+    if abm is not None:
+        abm.flush()
     np.savez(meta, n=n)
     print(f"[cache] built: {n} samples", flush=True)
     return build_cache(data_dirs)
 
 
-def _batch(data, idx, device, value_target="sparse"):
+def _batch(data, idx, device, value_target="sparse", abv_scale=86e6):
     obs = torch.from_numpy(np.asarray(data["obs"][idx], dtype=np.float32)).to(device)
     act = torch.from_numpy(np.asarray(data["act"][idx], dtype=np.int64)).to(device)
     mask_bits = np.unpackbits(np.asarray(data["mask"][idx]), axis=1)[:, :NUM_ACTIONS]
@@ -137,11 +148,29 @@ def _batch(data, idx, device, value_target="sparse"):
         # Learned-judge distillation: regress the recorded hybrid leaf value
         # (two-scale ab_value squash, il_dataset abv). DETERMINISTIC function
         # of the state — pure function approximation, no outcome noise.
+        # MEASURED 2026-06-07: scores 9-11% vs native AB-d2 — WORSE than the
+        # vp_margin head (20%). The combined-scalar MSE weights fine-channel
+        # errors at 0.25^2 = 1/16, so the optimizer never fits the fine
+        # discrimination that makes ab_value strong. Use ab_two_scale.
         if "abv" not in data:
             raise KeyError("value-target ab_value needs v3 shards with the "
                            "'abv' field (regenerate via il_dataset)")
         z = torch.from_numpy(np.asarray(data["abv"][idx],
                                         dtype=np.float32)).to(device)
+    elif value_target == "ab_two_scale":
+        # Learned judge v2: per-channel regression targets (B, 2) —
+        # tanh(vp_part/3) and tanh(fine_part/abv_scale) recomputed from the
+        # RAW margin. Each channel spans its own [-1,1] and gets FULL loss
+        # weight (train against net.forward_channels); the deploy-time net
+        # recombines 0.75/0.25 inside forward(), matching the hybrid leaf.
+        if "abm" not in data:
+            raise KeyError("value-target ab_two_scale needs v4 shards with "
+                           "the 'abm' field (regenerate via il_dataset)")
+        m = np.asarray(data["abm"][idx], dtype=np.float64)
+        vp = np.round(m / VP_W)
+        fine = m - vp * VP_W
+        zt = np.stack([np.tanh(vp / 3.0), np.tanh(fine / abv_scale)], axis=1)
+        z = torch.from_numpy(zt.astype(np.float32)).to(device)
     else:
         z = torch.from_numpy(np.asarray(data["z"][idx], dtype=np.float32)).to(device)
     return obs, act, mask, z
@@ -157,14 +186,21 @@ def main() -> None:
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--weight-decay", type=float, default=1e-4)
     p.add_argument("--value-coef", type=float, default=1.0)
-    p.add_argument("--value-target", choices=["sparse", "vp_margin", "ab_value"],
+    p.add_argument("--value-target",
+                   choices=["sparse", "vp_margin", "ab_value", "ab_two_scale"],
                    default="sparse",
                    help="vp_margin = dense final-VP margin (needs v2 shards "
                         "with seat field); tests the search-SNR hypothesis. "
-                        "ab_value = distill the hybrid leaf squash (needs v3 "
-                        "shards with abv field) — the LEARNED JUDGE: replaces "
-                        "the symbolic ab_value leaves at search time with the "
-                        "value head (--leaf-eval net).")
+                        "ab_value = naive single-scalar distill of the hybrid "
+                        "leaf squash (v3 shards; measured WORSE than "
+                        "vp_margin — 1/16 fine-channel loss weight). "
+                        "ab_two_scale = the LEARNED JUDGE: per-channel "
+                        "two-scale distill from the raw margin (v4 shards "
+                        "with abm), value_channels=2 net, recombined in "
+                        "forward() — deploy with --leaf-eval net.")
+    p.add_argument("--abv-scale", type=float, default=86e6,
+                   help="fine-part tanh scale for ab_two_scale targets; MUST "
+                        "match the search's --ab-value-scale (gate: 86e6).")
     p.add_argument("--val-frac", type=float, default=0.02)
     p.add_argument("--device", type=str,
                    default="cuda" if torch.cuda.is_available() else "cpu")
@@ -185,29 +221,39 @@ def main() -> None:
           flush=True)
 
     hidden = tuple(int(x) for x in args.hidden.split(",") if x)
-    net = PolicyValueNet(hidden=hidden).to(args.device)
+    two_scale = args.value_target == "ab_two_scale"
+    net = PolicyValueNet(hidden=hidden,
+                         value_channels=2 if two_scale else 1).to(args.device)
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr,
                             weight_decay=args.weight_decay)
     steps_per_epoch = len(train_idx) // args.batch_size
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(
         opt, T_max=args.epochs * steps_per_epoch, eta_min=args.lr * 0.05)
 
-    def evaluate_val() -> tuple[float, float]:
+    def evaluate_val() -> tuple[float, float, float | None]:
         net.eval()
         correct = tot = 0
         vmse = 0.0
+        vmse_fine = 0.0
         with torch.no_grad():
             for s in range(0, n_val, args.batch_size):
                 idx = val_idx[s:s + args.batch_size]
                 obs, act, mask, z = _batch(data, idx, args.device,
-                                           args.value_target)
-                logits, value = net(obs)
+                                           args.value_target, args.abv_scale)
+                logits, value = (net.forward_channels(obs) if two_scale
+                                 else net(obs))
                 logits = logits.masked_fill(~mask, float("-inf"))
                 correct += int((logits.argmax(dim=1) == act).sum())
                 tot += len(idx)
-                vmse += float(F.mse_loss(value, z, reduction="sum"))
+                if two_scale:
+                    se = (value - z) ** 2
+                    vmse += float(se[:, 0].sum())
+                    vmse_fine += float(se[:, 1].sum())
+                else:
+                    vmse += float(F.mse_loss(value, z, reduction="sum"))
         net.train()
-        return correct / tot, vmse / tot
+        return correct / tot, vmse / tot, (vmse_fine / tot if two_scale
+                                           else None)
 
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -219,8 +265,9 @@ def main() -> None:
         for s in range(0, len(order) - args.batch_size + 1, args.batch_size):
             idx = np.sort(order[s:s + args.batch_size])
             obs, act, mask, z = _batch(data, idx, args.device,
-                                       args.value_target)
-            logits, value = net(obs)
+                                       args.value_target, args.abv_scale)
+            logits, value = (net.forward_channels(obs) if two_scale
+                             else net(obs))
             logits = logits.masked_fill(~mask, float("-inf"))
             policy_loss = F.cross_entropy(logits, act)
             value_loss = F.mse_loss(value, z)
@@ -237,12 +284,15 @@ def main() -> None:
                       f"lr={sched.get_last_lr()[0]:.2e} "
                       f"({step*args.batch_size/(time.time()-t0):.0f} smp/s)",
                       flush=True)
-        acc, vmse = evaluate_val()
-        print(f"[ep {ep}] VAL teacher-top1={acc:.4f} value-mse={vmse:.4f}",
-              flush=True)
+        acc, vmse, vmse_fine = evaluate_val()
+        fine_str = ("" if vmse_fine is None
+                    else f" value-mse-fine={vmse_fine:.4f}")
+        print(f"[ep {ep}] VAL teacher-top1={acc:.4f} value-mse={vmse:.4f}"
+              f"{fine_str}", flush=True)
         ck = save_dir / f"il_ep{ep}.pt"
         torch.save({"net_state": net.state_dict(), "args": vars(args),
-                    "val_top1": acc, "val_vmse": vmse}, str(ck))
+                    "val_top1": acc, "val_vmse": vmse,
+                    "val_vmse_fine": vmse_fine}, str(ck))
         write_stamp(ck)
 
     final = save_dir / "il_final.pt"

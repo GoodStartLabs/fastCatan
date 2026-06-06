@@ -23,11 +23,16 @@ NUM_ACTIONS = fastcatan.NUM_ACTIONS
 
 
 class PolicyValueNet(nn.Module):
+    # Two-scale recombination weights, fixed to the hybrid leaf formula
+    # (mcts_vs_fixed leaf_eval='ab_value'): 0.75*vp_channel + 0.25*fine_channel.
+    TWO_SCALE_W = (0.75, 0.25)
+
     def __init__(
         self,
         obs_dim: int = OBS_SIZE,
         n_actions: int = NUM_ACTIONS,
         hidden: tuple[int, ...] = (512, 512, 256),
+        value_channels: int = 1,
     ):
         super().__init__()
         layers: list[nn.Module] = []
@@ -37,14 +42,35 @@ class PolicyValueNet(nn.Module):
             d = h
         self.trunk = nn.Sequential(*layers)
         self.policy_head = nn.Linear(d, n_actions)
+        self.value_channels = value_channels
         self.value_head = nn.Sequential(
-            nn.Linear(d, 128), nn.ReLU(), nn.Linear(128, 1), nn.Tanh()
+            nn.Linear(d, 128), nn.ReLU(), nn.Linear(128, value_channels),
+            nn.Tanh()
         )
 
     def forward(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """obs: (B, OBS_SIZE) -> (logits (B, NUM_ACTIONS), value (B,))."""
+        """obs: (B, OBS_SIZE) -> (logits (B, NUM_ACTIONS), value (B,)).
+
+        With value_channels=2 (the LEARNED JUDGE: per-channel two-scale
+        distillation of the ab_value margin) the channels are recombined
+        here with the fixed hybrid weights, so every consumer — MCTS leaf
+        eval, evaluate.py, the bridge — still sees one scalar in [-1, 1]."""
         z = self.trunk(obs)
-        return self.policy_head(z), self.value_head(z).squeeze(-1)
+        v = self.value_head(z)
+        if self.value_channels == 2:
+            w = self.TWO_SCALE_W
+            value = w[0] * v[..., 0] + w[1] * v[..., 1]
+        else:
+            value = v.squeeze(-1)
+        return self.policy_head(z), value
+
+    def forward_channels(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Training-time access to the RAW value channels (B, value_channels)
+        — per-channel regression targets need full loss weight per channel
+        (combined-scalar MSE down-weights the 0.25 fine channel by 1/16,
+        which is exactly what buried the fine signal in the naive distill)."""
+        z = self.trunk(obs)
+        return self.policy_head(z), self.value_head(z)
 
 
 def infer_hidden(net_state: dict) -> tuple[int, ...]:
@@ -63,10 +89,12 @@ def infer_hidden(net_state: dict) -> tuple[int, ...]:
 
 def load_policy_value_net(ckpt_state: dict, device: str = "cpu") -> PolicyValueNet:
     """Build + load a PolicyValueNet with the architecture the checkpoint
-    actually has. ``ckpt_state`` is the torch.load()'d dict holding
-    'net_state'."""
+    actually has (trunk widths AND value channels). ``ckpt_state`` is the
+    torch.load()'d dict holding 'net_state'."""
     sd = ckpt_state["net_state"]
-    net = PolicyValueNet(hidden=infer_hidden(sd)).to(device)
+    net = PolicyValueNet(hidden=infer_hidden(sd),
+                         value_channels=sd["value_head.2.weight"].shape[0],
+                         ).to(device)
     net.load_state_dict(sd)
     net.eval()
     return net
