@@ -43,8 +43,11 @@ import fastcatan
 
 from models.ckpt import write_stamp, verify_stamp
 from models.alphazero.net import PolicyValueNet, masked_log_softmax
-from models.alphazero.batched_mcts import BatchedMCTS, SNAP, SKIP, WIN_VP
+from models.alphazero.batched_mcts import (
+    BatchedMCTS, BatchedMCTSvsFixed, SNAP, SKIP, WIN_VP,
+)
 from models.alphazero.batched_eval import eval_vs_random_raw
+from models.alphazero.mcts import p2p_banned_words
 
 OBS_SIZE = fastcatan.OBS_SIZE
 NUM_ACTIONS = fastcatan.NUM_ACTIONS
@@ -72,9 +75,26 @@ class BatchedSelfplay:
         self.device = args.device
         self.suppress = not args.allow_trades
 
-        self.mcts = BatchedMCTS(
-            net, self.G, device=args.device, sims=args.sims,
-            c_puct=args.c_puct, seed=args.seed, suppress_p2p=self.suppress)
+        self.opponent = getattr(args, "opponent", "self")
+        if self.opponent == "alphabeta":
+            # Fine-tune-vs-AB mode: seat 0 learns (search + record), seats
+            # 1-3 play the fixed-hole native AB; the tree models them as the
+            # REAL opponent (BatchedMCTSvsFixed).
+            self.mcts = BatchedMCTSvsFixed(
+                net, self.G, device=args.device, sims=args.sims,
+                c_puct=args.c_puct, seed=args.seed,
+                suppress_p2p=self.suppress,
+                ab_depth=getattr(args, "ab_depth", 1),
+                ab_prune=getattr(args, "ab_prune", False),
+                value_mode=args.value_mode)
+            self._banned_words = (p2p_banned_words() if self.suppress
+                                  else None)
+            self._ab_out = np.zeros(self.G, dtype=np.uint32)
+        else:
+            self.mcts = BatchedMCTS(
+                net, self.G, device=args.device, sims=args.sims,
+                c_puct=args.c_puct, seed=args.seed,
+                suppress_p2p=self.suppress)
 
         self.game = fastcatan.BatchedEnv(self.G, args.seed ^ 0x6A3E5)
         self.game.reset()
@@ -93,6 +113,15 @@ class BatchedSelfplay:
 
         self.slots = [GameSlot() for _ in range(G)]
         self.buffer: deque = deque(maxlen=args.buffer_size)
+        self.anchor = None
+        if getattr(args, "anchor_dir", ""):
+            from pathlib import Path as _P
+            from models.alphazero.il_pretrain import build_cache
+            self.anchor = build_cache(
+                [_P(x) for x in args.anchor_dir.split(",") if x])
+            self._anchor_rng = np.random.default_rng(args.seed ^ 0xA2C404)
+            print(f"[anchor] {self.anchor['n']} IL samples "
+                  f"(frac={getattr(args, 'anchor_frac', 0.0)})", flush=True)
         self.games_done = 0
         self.decisions_done = 0
         self.winners_hist: deque = deque(maxlen=256)
@@ -145,17 +174,48 @@ class BatchedSelfplay:
     # -------- the lockstep move-step --------
 
     def _fast_forward(self) -> None:
-        """Step every game whose to-move seat is forced (single legal action)
-        until all G games sit at a multi-legal decision point."""
-        for _ in range(512):                     # forced runs are short
+        """Advance every game to its next recordable decision point.
+
+        'self' mode: step forced (single-legal) moves for any seat; stop when
+        every game has a multi-legal decision (recorded for whoever moves).
+        'alphabeta' mode: additionally, seats 1-3 play the fixed-hole native
+        AB (one ab_decide_batch per round); stop only at SEAT-0 multi-legal
+        decisions."""
+        for _ in range(1024):
             legal = self._legal_bool()
             n_legal = legal.sum(axis=1)
-            forced = n_legal == 1
-            if not forced.any():
-                return
             self.acts[:] = SKIP
-            forced_idx = np.nonzero(forced)[0]
-            self.acts[forced_idx] = legal[forced_idx].argmax(axis=1)
+            ab_games: list[int] = []
+            if self.opponent == "alphabeta":
+                self.game.write_sigs(self.sigs)
+                for g in range(self.G):
+                    if n_legal[g] == 0:
+                        continue
+                    if self.sigs[g, 0] != 0:
+                        ab_games.append(g)
+                    elif n_legal[g] == 1:
+                        self.acts[g] = int(legal[g].argmax())
+            else:
+                forced_idx = np.nonzero(n_legal == 1)[0]
+                self.acts[forced_idx] = legal[forced_idx].argmax(axis=1)
+            if ab_games:
+                if self._banned_words is not None:
+                    self.game.ab_decide_batch(self.args.ab_depth,
+                                              self.args.ab_prune,
+                                              self._banned_words,
+                                              self._ab_out)
+                else:
+                    self.game.ab_decide_batch(self.args.ab_depth,
+                                              self.args.ab_prune,
+                                              self._ab_out)
+                for g in ab_games:
+                    a = int(self._ab_out[g])
+                    if a == SKIP or not legal[g, a]:    # safety net (~never)
+                        ids = np.nonzero(legal[g])[0]
+                        a = int(np.random.choice(ids))
+                    self.acts[g] = a
+            if not (self.acts != SKIP).any():
+                return
             self.game.step_raw(self.acts, self.rew, self.done)
             self._apply_dones()
         raise RuntimeError("fast-forward failed to reach decision points")
@@ -186,23 +246,73 @@ class BatchedSelfplay:
 
     # -------- training --------
 
+    def _anchor_batch(self, k: int):
+        """k supervised samples from the IL anchor corpus (teacher action +
+        true final margin). Keeps the value head's fine-grained resolution
+        while early fine-tune outcomes are skewed (the g2010 lesson: 2k games
+        of ~-0.8 margins halved the search win-rate by flattening the value)."""
+        a = self.anchor
+        idx = np.sort(self._anchor_rng.integers(0, a["n"], size=k))
+        obs = torch.from_numpy(
+            np.asarray(a["obs"][idx], dtype=np.float32)).to(self.device)
+        act = torch.from_numpy(
+            np.asarray(a["act"][idx], dtype=np.int64)).to(self.device)
+        mask_bits = np.unpackbits(np.asarray(a["mask"][idx]),
+                                  axis=1)[:, :NUM_ACTIONS]
+        mask = torch.from_numpy(mask_bits.astype(bool)).to(self.device)
+        vps = np.asarray(a["vps"][idx], dtype=np.float32)
+        seat = np.asarray(a["seat"][idx], dtype=np.int64)
+        rows = np.arange(len(seat))
+        own = vps[rows, seat]
+        vo = vps.copy()
+        vo[rows, seat] = -1.0
+        if self.args.value_mode == "vp_margin":
+            zt = np.clip((own - vo.max(axis=1)) / 10.0, -1.0, 1.0)
+        else:
+            zt = np.where(own >= WIN_VP, 1.0, -1.0)
+        z = torch.from_numpy(zt.astype(np.float32)).to(self.device)
+        return obs, act, mask, z
+
     def train_steps(self, opt, n_steps: int) -> dict:
         self.net.train()
         last = {"loss": float("nan"), "policy": float("nan"),
                 "value": float("nan")}
+        anchor_frac = getattr(self.args, "anchor_frac", 0.0)
         for _ in range(n_steps):
-            batch = random.sample(self.buffer,
-                                  min(self.args.batch_size, len(self.buffer)))
-            obs = torch.from_numpy(np.stack([b[0] for b in batch])).to(self.device)
-            pi = torch.from_numpy(np.stack([b[1] for b in batch])).to(self.device)
-            mask = torch.from_numpy(np.stack([b[2] for b in batch])).to(self.device)
-            z = torch.tensor([b[3] for b in batch], dtype=torch.float32,
-                             device=self.device)
-            logits, value = self.net(obs)
-            logp = masked_log_softmax(logits, mask)
-            policy_loss = -(pi * logp).sum(dim=1).mean()
-            value_loss = F.mse_loss(value, z)
-            loss = policy_loss + self.args.value_coef * value_loss
+            n_live = self.args.batch_size
+            n_anchor = 0
+            if self.anchor is not None and anchor_frac > 0:
+                n_anchor = int(self.args.batch_size * anchor_frac)
+                n_live = self.args.batch_size - n_anchor
+            batch = (random.sample(self.buffer,
+                                   min(n_live, len(self.buffer)))
+                     if len(self.buffer) else [])
+            loss = None
+            policy_loss = value_loss = torch.tensor(float("nan"))
+            if batch:
+                obs = torch.from_numpy(np.stack([b[0] for b in batch])).to(self.device)
+                pi = torch.from_numpy(np.stack([b[1] for b in batch])).to(self.device)
+                mask = torch.from_numpy(np.stack([b[2] for b in batch])).to(self.device)
+                z = torch.tensor([b[3] for b in batch], dtype=torch.float32,
+                                 device=self.device)
+                logits, value = self.net(obs)
+                logp = masked_log_softmax(logits, mask)
+                policy_loss = -(pi * logp).sum(dim=1).mean()
+                value_loss = F.mse_loss(value, z)
+                loss = policy_loss + self.args.value_coef * value_loss
+
+            if n_anchor > 0:
+                a_obs, a_act, a_mask, a_z = self._anchor_batch(n_anchor)
+                a_logits, a_value = self.net(a_obs)
+                a_logits = a_logits.masked_fill(~a_mask, float("-inf"))
+                a_policy = F.cross_entropy(a_logits, a_act)
+                a_val = F.mse_loss(a_value, a_z)
+                a_loss = anchor_frac * (
+                    a_policy + self.args.value_coef * a_val)
+                loss = a_loss if loss is None else loss + a_loss
+
+            if loss is None:
+                continue
             opt.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.net.parameters(), 5.0)
@@ -242,7 +352,27 @@ def main() -> None:
     p.add_argument("--eval-games", type=int, default=128)
     p.add_argument("--allow-trades", action="store_true")
     p.add_argument("--value-mode", choices=["sparse", "vp_margin"],
-                   default="sparse")
+                   default="sparse",
+                   help="z targets. DESIGN RULE (2026-06-05): value heads "
+                        "that feed search need DENSE targets — use vp_margin "
+                        "for any net meant to search (the ±1-trained value "
+                        "is too noisy per leaf and capped every prior search "
+                        "experiment at 2-7%; vp_margin doubled it to 15%).")
+    p.add_argument("--opponent", choices=["self", "alphabeta"],
+                   default="self",
+                   help="'alphabeta' = fine-tune mode: seat 0 searches+"
+                        "records vs 3 fixed-hole native-AB seats "
+                        "(BatchedMCTSvsFixed, AB modeled in-tree).")
+    p.add_argument("--ab-depth", type=int, default=1)
+    p.add_argument("--ab-prune", action="store_true")
+    p.add_argument("--anchor-dir", type=str, default="",
+                   help="IL shard dir(s, comma-sep): mix supervised "
+                        "teacher-corpus batches into every training burst "
+                        "to keep the value head's resolution while live "
+                        "outcomes are skewed.")
+    p.add_argument("--anchor-frac", type=float, default=0.5,
+                   help="fraction of each training batch drawn from the "
+                        "anchor corpus (when --anchor-dir is set).")
     p.add_argument("--init-from", type=str, default="",
                    help="Warm-start net weights from this checkpoint (.pt).")
     p.add_argument("--hidden", type=str, default="512,512,256",
@@ -268,9 +398,12 @@ def main() -> None:
     opt = torch.optim.Adam(net.parameters(), lr=args.lr)
 
     sp = BatchedSelfplay(net, args)
+    opp = (f"alphabeta(d={args.ab_depth})" if args.opponent == "alphabeta"
+           else "self")
     print(f"[cfg] G={args.num_games} sims={args.sims} device={args.device} "
           f"hidden={hidden} trades={'on' if args.allow_trades else 'off'} "
-          f"value={args.value_mode} total={args.total_games}", flush=True)
+          f"value={args.value_mode} opp={opp} total={args.total_games}",
+          flush=True)
 
     t0 = time.time()
     it = 0

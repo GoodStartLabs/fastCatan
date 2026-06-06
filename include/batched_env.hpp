@@ -100,4 +100,13 @@ namespace catan {
     // via handsizes, VP dev-draws via vps).
     void batched_env_write_sigs(const BatchedEnv& env, int32_t* out) noexcept;
 
+    // Native AlphaBeta pick for every env's CURRENT player, one OpenMP pass:
+    // out[i] = ab_decide(states[i], layouts[i], states[i].current_player,
+    // depth, prune, nullptr, banned). 0xFFFFFFFF where no legal action.
+    // `banned` optional uint64[MASK_WORDS] (see search.hpp). This is the
+    // batched opponent/in-tree-advance primitive for training vs AB — the
+    // per-env Python Env round-trip was the throughput killer.
+    void batched_env_ab_decide(const BatchedEnv& env, int depth, bool prune,
+                               const uint64_t* banned, uint32_t* out) noexcept;
+
 }  // namespace catan

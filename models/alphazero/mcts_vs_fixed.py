@@ -50,6 +50,8 @@ class MCTSvsFixed:
         value_mode: str = "vp_margin",
         ab_depth: int = 1,
         ab_prune: bool = False,
+        leaf_eval: str = "net",
+        ab_value_scale: float = 30.0,
     ):
         self.net = net
         self.device = device
@@ -61,6 +63,8 @@ class MCTSvsFixed:
         self._np_rng = np.random.default_rng(seed ^ 0x71FED)
         self._p2p = p2p_trade_mask() if suppress_p2p else None
         self.value_mode = value_mode
+        self.leaf_eval = leaf_eval
+        self.ab_value_scale = ab_value_scale
         self.opp = make_alphabeta_pick(
             self.rng, ab_depth, ab_prune,
             banned=p2p_banned_words() if suppress_p2p else None)
@@ -117,7 +121,15 @@ class MCTSvsFixed:
 
     @torch.no_grad()
     def _expand(self, node: Node) -> float:
-        """Expand from the env's CURRENT state (== node's state). Seat-0 POV only."""
+        """Expand from the env's CURRENT state (== node's state). Seat-0 POV only.
+
+        leaf_eval='net'      -> the net's value head (default).
+        leaf_eval='ab_value' -> HYBRID: the net still provides the PRIOR, but
+        the leaf value is the native Catanatron heuristic — deterministic and
+        fine-grained, attacking the leaf-noise saturation (a learned ±-ish
+        value can't resolve AB-scale 1-3%-win-prob move differences; the
+        hand value can, with zero variance). Normalized as a margin over the
+        best opponent seat squashed by tanh(./ab_value_scale)."""
         self.env.write_obs(LEARNER, self._obs)
         obs = torch.from_numpy(self._obs).unsqueeze(0).to(self.device)
         logits, value = self.net(obs)
@@ -129,6 +141,21 @@ class MCTSvsFixed:
         s = p.sum()
         node.P = (p / s).astype(np.float32) if s > 0 else node.mask.astype(np.float32)
         node.expanded = True
+        if self.leaf_eval == "ab_value":
+            # Catanatron's value is LEXICOGRAPHIC: public VPs at 3e14 dwarf
+            # the fine features (production/reach/etc at ~1e0-1e3). Decompose
+            # and squash each scale separately so BOTH levels stay resolvable
+            # in [-1,1] — a single tanh would quantize to coarse VP steps and
+            # discard exactly the fine discrimination that makes AB strong.
+            VP_W = 3e14
+            v0 = self.env.ab_value(LEARNER)
+            vo = max(self.env.ab_value(q) for q in range(NUM_PLAYERS)
+                     if q != LEARNER)
+            margin = v0 - vo
+            vp_part = np.round(margin / VP_W)
+            fine_part = margin - vp_part * VP_W
+            return float(0.75 * np.tanh(vp_part / 3.0)
+                         + 0.25 * np.tanh(fine_part / self.ab_value_scale))
         return float(value.item())
 
     # -------- selection --------

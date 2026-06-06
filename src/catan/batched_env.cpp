@@ -3,6 +3,7 @@
 #include "mask.hpp"
 #include "obs.hpp"
 #include "rng.hpp"
+#include "search.hpp"
 
 #include <cstdlib>
 #include <cstring>
@@ -191,6 +192,18 @@ void batched_env_write_obs_all4(const BatchedEnv& env, float* out) noexcept {
         for (uint8_t pov = 0; pov < 4; ++pov)
             write_obs(env.states[i], env.layouts[i], pov,
                       out + (std::size_t(i) * 4 + pov) * OBS_SIZE);
+}
+
+void batched_env_ab_decide(const BatchedEnv& env, int depth, bool prune,
+                           const uint64_t* banned, uint32_t* out) noexcept {
+#if FCATAN_HAVE_OPENMP
+    #pragma omp parallel for schedule(dynamic)
+#endif
+    for (int32_t i = 0; i < int32_t(env.n); ++i) {
+        const GameState& s = env.states[i];
+        out[i] = ab_decide(s, env.layouts[i], s.current_player,
+                           depth, prune, nullptr, banned);
+    }
 }
 
 void batched_env_write_sigs(const BatchedEnv& env, int32_t* out) noexcept {

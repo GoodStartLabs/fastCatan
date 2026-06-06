@@ -105,6 +105,11 @@ def main() -> None:
     p.add_argument("--ab-prune", action="store_true",
                    help="Use AlphaBeta action pruning (default off = full legal set, "
                         "matching Catanatron AlphaBetaPlayer).")
+    p.add_argument("--leaf-eval", choices=["net", "ab_value"], default="net",
+                   help="MCTSvsFixed leaf evaluation: 'ab_value' = hybrid "
+                        "(net prior + deterministic native heuristic leaves; "
+                        "attacks leaf-noise saturation).")
+    p.add_argument("--ab-value-scale", type=float, default=30.0)
     args = p.parse_args()
 
     ckpt = Path(args.ckpt)
@@ -121,7 +126,9 @@ def main() -> None:
         from models.alphazero.mcts_vs_fixed import MCTSvsFixed
         mcts = MCTSvsFixed(net, device=args.device, sims=args.sims, c_puct=args.c_puct,
                            dirichlet_frac=0.0, seed=args.seed, suppress_p2p=suppress,
-                           ab_depth=args.ab_depth, ab_prune=args.ab_prune)
+                           ab_depth=args.ab_depth, ab_prune=args.ab_prune,
+                           leaf_eval=args.leaf_eval,
+                           ab_value_scale=args.ab_value_scale)
     else:
         mcts = MCTS(net, device=args.device, sims=args.sims, c_puct=args.c_puct,
                     dirichlet_frac=0.0, seed=args.seed, suppress_p2p=suppress)

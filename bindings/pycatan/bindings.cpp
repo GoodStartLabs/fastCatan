@@ -521,6 +521,33 @@ counter. GIL released.)")
              nb::arg("out"),
              "Fill (num_envs, 4, OBS_SIZE) float32 with every env's obs from "
              "all 4 seat POVs — one pass for max^n MCTS leaf evaluation.")
+        .def("ab_decide_batch",
+             [](PyBatchedEnv& e, int depth, bool prune,
+                ArrU64 banned_mask, ArrU32 out) {
+                 if (banned_mask.shape(0) != MASK_WORDS)
+                     throw std::runtime_error("banned mask length mismatch");
+                 if (out.shape(0) != e.inner.n)
+                     throw std::runtime_error("out length mismatch");
+                 nb::gil_scoped_release release;
+                 batched_env_ab_decide(e.inner, depth, prune,
+                                       banned_mask.data(), out.data());
+             },
+             nb::arg("depth"), nb::arg("prune"), nb::arg("banned_mask"),
+             nb::arg("out"),
+             "Native AB pick for every env's CURRENT player in one OpenMP "
+             "pass: out[i] = ab_decide(env i, current_player, depth, prune, "
+             "banned_mask). 0xFFFFFFFF where no legal action. The batched "
+             "opponent primitive for training/searching vs AB.")
+        .def("ab_decide_batch",
+             [](PyBatchedEnv& e, int depth, bool prune, ArrU32 out) {
+                 if (out.shape(0) != e.inner.n)
+                     throw std::runtime_error("out length mismatch");
+                 nb::gil_scoped_release release;
+                 batched_env_ab_decide(e.inner, depth, prune, nullptr,
+                                       out.data());
+             },
+             nb::arg("depth"), nb::arg("prune"), nb::arg("out"),
+             "Overload without a banned mask (full action space).")
         .def("write_sigs",
              [](PyBatchedEnv& e, ArrI32_2D out) {
                  if (out.shape(0) != e.inner.n
