@@ -240,6 +240,12 @@ Determinism: same seed -> same trajectory. Perft hashes pinned.
         .def("action_mask", &PyEnv::action_mask, nb::arg("out"),
              "Read the incrementally-maintained action mask into the "
              "provided uint64 buffer of length MASK_WORDS.")
+        .def("recompute_mask",
+             [](PyEnv& e) { compute_mask(e.s, e.b, e.s.action_mask); },
+             "Recompute the cached legal-action mask from the current "
+             "state. Required after load_snapshot of an INJECTED state "
+             "(bridge state_inject fills the state fields but not the "
+             "cached mask; step/reset maintain it otherwise).")
         .def("write_obs", &PyEnv::write_obs,
              nb::arg("pov"), nb::arg("out"),
              "Write obs from ``pov`` (player 0..3) into the provided "

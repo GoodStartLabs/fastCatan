@@ -52,6 +52,7 @@ class MCTSvsFixed:
         ab_prune: bool = False,
         leaf_eval: str = "net",
         ab_value_scale: float = 30.0,
+        learner_seat: int = LEARNER,
     ):
         self.net = net
         self.device = device
@@ -65,6 +66,7 @@ class MCTSvsFixed:
         self.value_mode = value_mode
         self.leaf_eval = leaf_eval
         self.ab_value_scale = ab_value_scale
+        self.learner = learner_seat   # tree decisions + POV (seat rotation)
         self.opp = make_alphabeta_pick(
             self.rng, ab_depth, ab_prune,
             banned=p2p_banned_words() if suppress_p2p else None)
@@ -93,10 +95,12 @@ class MCTSvsFixed:
     def _terminal_value(self) -> float:
         vps = [self.env.player_vp(p) for p in range(NUM_PLAYERS)]
         if self.value_mode == "vp_margin":
-            best_other = max(vps[q] for q in range(NUM_PLAYERS) if q != LEARNER)
-            return float(np.clip((vps[LEARNER] - best_other) / 10.0, -1.0, 1.0))
+            best_other = max(vps[q] for q in range(NUM_PLAYERS)
+                             if q != self.learner)
+            return float(np.clip((vps[self.learner] - best_other) / 10.0,
+                                 -1.0, 1.0))
         winner = next((p for p in range(NUM_PLAYERS) if vps[p] >= WIN_VP), -1)
-        return 1.0 if winner == LEARNER else -1.0
+        return 1.0 if winner == self.learner else -1.0
 
     def _advance_to_learner(self):
         """Play opponents + forced learner steps + chance from the env's CURRENT
@@ -109,9 +113,10 @@ class MCTSvsFixed:
             if not legal:
                 return True, mask, legal
             cp = self.env.current_player
-            if cp == LEARNER and len(legal) > 1:
+            if cp == self.learner and len(legal) > 1:
                 return False, mask, legal
-            action = legal[0] if cp == LEARNER else self.opp(self.env, cp, legal)
+            action = (legal[0] if cp == self.learner
+                      else self.opp(self.env, cp, legal))
             self.env.reseed(self.rng.getrandbits(64))
             _r, done = self.env.step(action)
             if done:
@@ -130,7 +135,7 @@ class MCTSvsFixed:
         value can't resolve AB-scale 1-3%-win-prob move differences; the
         hand value can, with zero variance). Normalized as a margin over the
         best opponent seat squashed by tanh(./ab_value_scale)."""
-        self.env.write_obs(LEARNER, self._obs)
+        self.env.write_obs(self.learner, self._obs)
         obs = torch.from_numpy(self._obs).unsqueeze(0).to(self.device)
         logits, value = self.net(obs)
         row = logits[0].float().cpu().numpy()
@@ -148,9 +153,9 @@ class MCTSvsFixed:
             # in [-1,1] — a single tanh would quantize to coarse VP steps and
             # discard exactly the fine discrimination that makes AB strong.
             VP_W = 3e14
-            v0 = self.env.ab_value(LEARNER)
+            v0 = self.env.ab_value(self.learner)
             vo = max(self.env.ab_value(q) for q in range(NUM_PLAYERS)
-                     if q != LEARNER)
+                     if q != self.learner)
             margin = v0 - vo
             vp_part = np.round(margin / VP_W)
             fine_part = margin - vp_part * VP_W
@@ -201,7 +206,7 @@ class MCTSvsFixed:
             bucket = node.children.setdefault(a, {})
             child = bucket.get(sig)
             if child is None:
-                child = Node(self.env.snapshot(), LEARNER, mask, legal)
+                child = Node(self.env.snapshot(), self.learner, mask, legal)
                 bucket[sig] = child
                 value = self._expand(child)
                 break
@@ -218,7 +223,7 @@ class MCTSvsFixed:
                add_root_noise: bool = True):
         self.env.load_snapshot(root_snapshot)
         mask, legal = self._legal()
-        root = Node(root_snapshot, LEARNER, mask, legal)
+        root = Node(root_snapshot, self.learner, mask, legal)
         self._expand(root)
         if add_root_noise:
             self._add_root_noise(root)

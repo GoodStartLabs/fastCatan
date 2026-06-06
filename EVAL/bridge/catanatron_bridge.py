@@ -66,6 +66,13 @@ _a = fastcatan.action
 
 _COMPOSE_LOOP_CAP = 50
 
+# Max OFFER_TRADE emissions per turn (anti-stall). Catanatron has no
+# within-turn offer limit and num_turns only bumps on END_TURN, so a policy
+# that re-offers every PLAY_TURN cycle — e.g. argmax facing an opponent that
+# always rejects (AlphaBeta) — would loop a single turn forever. Mirrors the
+# C++ MAX_TRADE_COMPOSE_PER_TURN intent at the cross-decide() granularity.
+_MAX_OFFERS_PER_TURN = 50
+
 
 PolicyFn = Callable[[np.ndarray, "list[int]", random.Random], int]
 
@@ -107,13 +114,23 @@ class CatanatronBridge(Player):
     """
 
     def __init__(self, color: Color, policy: Optional[PolicyFn] = None,
-                 seed: int = 0, enable_trades: bool = True):
+                 seed: int = 0, enable_trades: bool = True,
+                 max_offers_per_turn: int = _MAX_OFFERS_PER_TURN):
         super().__init__(color)
         self._rng = random.Random(seed)
         self._policy = policy if policy is not None else uniform_policy
         self._enable_trades = enable_trades
+        self._max_offers_per_turn = max_offers_per_turn
+        # Per-turn OFFER_TRADE counter (anti-stall, see decide()). Keyed on
+        # state.num_turns, which is distinct per player-turn.
+        self._offer_turn = -1
+        self._offers_this_turn = 0
 
     def decide(self, game: Game, playable_actions):
+        # Stash for state-aware policies (e.g. AB/mcts_policy.MctsStatePolicy
+        # injects this game into a fastcatan Env and searches it). Plain
+        # (obs, mask, rng) policies never read it.
+        self._game = game
         if len(playable_actions) == 1:
             return playable_actions[0]
 
@@ -141,7 +158,15 @@ class CatanatronBridge(Player):
                 and player_has_rolled(game.state, self.color)
                 and game.state.free_roads_available == 0
                 and not game.state.is_road_building):
-            return self._decide_compose(game, playable_actions)
+            # Per-turn OFFER_TRADE cap (see _MAX_OFFERS_PER_TURN). Once spent,
+            # fall through to the regular (no-compose) path for the rest of
+            # this turn so the policy can only build / end / maritime-trade.
+            turn = game.state.num_turns
+            if turn != self._offer_turn:
+                self._offer_turn = turn
+                self._offers_this_turn = 0
+            if self._offers_this_turn < self._max_offers_per_turn:
+                return self._decide_compose(game, playable_actions)
 
         # Regular path (initial placements, pre-roll, dev plays, discard, ...)
         return self._decide_regular(game, playable_actions)
@@ -340,6 +365,7 @@ class CatanatronBridge(Player):
             if chosen == _a.TRADE_OPEN:
                 give_cat = fast_freqdeck_to_cat(scratch_give)
                 want_cat = fast_freqdeck_to_cat(scratch_want)
+                self._offers_this_turn += 1
                 return Action(self.color, ActionType.OFFER_TRADE,
                               give_cat + want_cat)
 
