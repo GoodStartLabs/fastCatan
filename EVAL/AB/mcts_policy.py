@@ -47,6 +47,7 @@ class MctsStatePolicy:
         leaf_eval: str = "ab_value",
         ab_value_scale: float = 86e6,
         model_ab_depth: int = 1,
+        model_ab_prune: bool = False,
         c_puct: float = 1.5,
         seed: int = 0,
         device: str = "cpu",
@@ -57,7 +58,8 @@ class MctsStatePolicy:
         self.mcts = MCTSvsFixed(
             net, device=device, sims=sims, c_puct=c_puct,
             dirichlet_frac=0.0, seed=seed, suppress_p2p=True,
-            ab_depth=model_ab_depth, leaf_eval=leaf_eval,
+            ab_depth=model_ab_depth, ab_prune=model_ab_prune,
+            leaf_eval=leaf_eval,
             ab_value_scale=ab_value_scale, learner_seat=seat)
         self.fallbacks = 0
         self.decisions = 0

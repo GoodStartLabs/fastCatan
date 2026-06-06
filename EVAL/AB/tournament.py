@@ -106,6 +106,10 @@ def main() -> None:
     p.add_argument("--model-ab-depth", type=int, default=1,
                    help="depth of the IN-TREE opponent model (native AB); "
                         "independent of the actual table opponents.")
+    p.add_argument("--model-ab-prune", action="store_true",
+                   help="prune the IN-TREE opponent model's action set — "
+                        "match this to the table's --ab-prune so the search "
+                        "models the opponents it actually faces.")
     p.add_argument("--rotate-seats", action="store_true",
                    help="rotate the agent through all 4 seats (game g -> "
                         "seat g%%4) instead of always RED/seat-0.")
@@ -172,7 +176,8 @@ def main() -> None:
                 mcts_net, seat=seat, sims=args.mcts_sims,
                 leaf_eval=args.leaf_eval,
                 ab_value_scale=args.ab_value_scale,
-                model_ab_depth=args.model_ab_depth, seed=seed)
+                model_ab_depth=args.model_ab_depth,
+                model_ab_prune=args.model_ab_prune, seed=seed)
         else:
             game_policy = policy
 
