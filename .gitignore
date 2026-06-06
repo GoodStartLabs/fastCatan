@@ -45,3 +45,6 @@ models/checkpoints/alphazero_batched_*/
 models/checkpoints/il_*/
 models/datasets/
 DEBUG/logs/*.log
+/models/checkpoints
+/AB/results
+EVAL/AB/results/tournament_mcts_alphabeta_20260606_122054.json
