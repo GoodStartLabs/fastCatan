@@ -169,6 +169,11 @@ def main() -> None:
     bridge_wins = 0
     mcts_fallbacks = mcts_decisions = 0
     no_winner = 0
+    # catanatron SHUFFLES seating (State.__init__ random.sample), so the
+    # agent's turn position is random each game — log it for seat-conditional
+    # rates in the thesis.
+    agent_seat_games = [0, 0, 0, 0]
+    agent_seat_wins = [0, 0, 0, 0]
     t0 = time.perf_counter()
 
     for g in range(args.games):
@@ -203,12 +208,15 @@ def main() -> None:
                                              args.ab_depth, args.ab_prune))
         game = Game(players, seed=seed)
         winner = game.play()
+        true_seat = int(game.state.color_to_index[bridge_color])
+        agent_seat_games[true_seat] += 1
         if winner is None:
             no_winner += 1
         else:
             wins[winner] += 1
             if winner == bridge_color:
                 bridge_wins += 1
+                agent_seat_wins[true_seat] += 1
         if args.policy == "mcts":
             mcts_fallbacks += game_policy.fallbacks
             mcts_decisions += game_policy.decisions
@@ -259,6 +267,8 @@ def main() -> None:
         "gate_baseline": GATE_BASELINE,
         "gate_pass": gate_pass,
         "seat_wins": {c.name: wins[c] for c in COLORS},
+        "agent_seat_games": agent_seat_games,
+        "agent_seat_wins": agent_seat_wins,
         "elapsed_s": elapsed,
         "s_per_game": elapsed / args.games if args.games else 0.0,
     }
