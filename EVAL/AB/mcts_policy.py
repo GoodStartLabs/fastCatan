@@ -66,6 +66,18 @@ class MctsStatePolicy:
         self.fallbacks = 0
         self.decisions = 0
 
+    def _sync_seat(self, game) -> None:
+        """catanatron SHUFFLES seating in State.__init__
+        (`random.sample(players, ...)`), so the construction-time seat is
+        fiction — derive the agent's TRUE seat from the live game every
+        decision. (The g%4 assumption had the search optimizing some
+        OPPONENT's position in ~75% of games across bridge runs v1-v5 —
+        which pinned them all at ~0.25 x native ≈ 6%.)"""
+        seat = int(game.state.color_to_index[self.bridge.color])
+        if seat != self.seat:
+            self.seat = seat
+        self.mcts.learner = seat
+
     def __call__(self, obs: np.ndarray, mask: "list[int]",
                  rng: random.Random) -> int:
         self.decisions += 1
@@ -73,6 +85,7 @@ class MctsStatePolicy:
         if game is None:                # defensive; should never happen
             self.fallbacks += 1
             return rng.choice(mask)
+        self._sync_seat(game)
         inject(self.env, game)            # default actor = current_color ✓
         # state_inject fills the state but not the cached action mask; the
         # MCTS (unlike ab_decide) trusts the cache, and the root SNAPSHOT
@@ -115,6 +128,7 @@ class MctsStatePolicy:
         hex_mask = sorted(hex_id_to_coord.keys())
 
         self.decisions += 1
+        self._sync_seat(game)
         inject(self.env, game)
         self.env.recompute_mask()
         snap = self.env.snapshot()
