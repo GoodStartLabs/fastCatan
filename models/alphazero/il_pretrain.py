@@ -55,7 +55,7 @@ def build_cache(data_dirs: list[Path]) -> dict:
     if meta.exists():
         m = np.load(meta)
         n = int(m["n"])
-        return {
+        out = {
             "n": n,
             "obs": np.lib.format.open_memmap(cache / "obs.npy", mode="r"),
             "act": np.lib.format.open_memmap(cache / "act.npy", mode="r"),
@@ -64,14 +64,19 @@ def build_cache(data_dirs: list[Path]) -> dict:
             "vps": np.lib.format.open_memmap(cache / "vps.npy", mode="r"),
             "seat": np.lib.format.open_memmap(cache / "seat.npy", mode="r"),
         }
+        if (cache / "abv.npy").exists():   # v3 shards (learned-judge labels)
+            out["abv"] = np.lib.format.open_memmap(cache / "abv.npy", mode="r")
+        return out
     shards = sorted(s for d in data_dirs
                     for s in glob.glob(str(d / "shard_*.npz")))
     if not shards:
         raise FileNotFoundError(f"no shards under {data_dirs}")
     counts = []
+    has_abv = True
     for s in shards:
         with np.load(s) as d:
             counts.append(d["act"].shape[0])
+            has_abv = has_abv and ("abv" in d.files)
     n = int(sum(counts))
     cache.mkdir(exist_ok=True)
     obs = np.lib.format.open_memmap(cache / "obs.npy", mode="w+",
@@ -86,6 +91,9 @@ def build_cache(data_dirs: list[Path]) -> dict:
                                     dtype=np.uint8, shape=(n, 4))
     seat = np.lib.format.open_memmap(cache / "seat.npy", mode="w+",
                                      dtype=np.uint8, shape=(n,))
+    abv = (np.lib.format.open_memmap(cache / "abv.npy", mode="w+",
+                                     dtype=np.float32, shape=(n,))
+           if has_abv else None)
     o = 0
     for s, c in zip(shards, counts):
         with np.load(s) as d:
@@ -95,10 +103,14 @@ def build_cache(data_dirs: list[Path]) -> dict:
             z[o:o + c] = d["z"]
             vps[o:o + c] = d["vps"]
             seat[o:o + c] = d["seat"]
+            if abv is not None:
+                abv[o:o + c] = d["abv"]
         o += c
         print(f"[cache] {o}/{n}", flush=True)
     obs.flush(); act.flush(); mask.flush(); z.flush()
     vps.flush(); seat.flush()
+    if abv is not None:
+        abv.flush()
     np.savez(meta, n=n)
     print(f"[cache] built: {n} samples", flush=True)
     return build_cache(data_dirs)
@@ -121,6 +133,15 @@ def _batch(data, idx, device, value_target="sparse"):
         vps_other[rows, seat] = -1.0
         zt = np.clip((own - vps_other.max(axis=1)) / 10.0, -1.0, 1.0)
         z = torch.from_numpy(zt.astype(np.float32)).to(device)
+    elif value_target == "ab_value":
+        # Learned-judge distillation: regress the recorded hybrid leaf value
+        # (two-scale ab_value squash, il_dataset abv). DETERMINISTIC function
+        # of the state — pure function approximation, no outcome noise.
+        if "abv" not in data:
+            raise KeyError("value-target ab_value needs v3 shards with the "
+                           "'abv' field (regenerate via il_dataset)")
+        z = torch.from_numpy(np.asarray(data["abv"][idx],
+                                        dtype=np.float32)).to(device)
     else:
         z = torch.from_numpy(np.asarray(data["z"][idx], dtype=np.float32)).to(device)
     return obs, act, mask, z
@@ -136,10 +157,14 @@ def main() -> None:
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--weight-decay", type=float, default=1e-4)
     p.add_argument("--value-coef", type=float, default=1.0)
-    p.add_argument("--value-target", choices=["sparse", "vp_margin"],
+    p.add_argument("--value-target", choices=["sparse", "vp_margin", "ab_value"],
                    default="sparse",
                    help="vp_margin = dense final-VP margin (needs v2 shards "
-                        "with seat field); tests the search-SNR hypothesis.")
+                        "with seat field); tests the search-SNR hypothesis. "
+                        "ab_value = distill the hybrid leaf squash (needs v3 "
+                        "shards with abv field) — the LEARNED JUDGE: replaces "
+                        "the symbolic ab_value leaves at search time with the "
+                        "value head (--leaf-eval net).")
     p.add_argument("--val-frac", type=float, default=0.02)
     p.add_argument("--device", type=str,
                    default="cuda" if torch.cuda.is_available() else "cpu")

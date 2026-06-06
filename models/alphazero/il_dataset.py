@@ -19,6 +19,11 @@ to clone) and records every multi-legal decision:
     z     float16               sparse +-1 outcome for the recording seat
     vps   uint8  (4,)           final VPs (lets the pretrainer recompute
                                 vp_margin targets without replay)
+    abv   float32               the HYBRID LEAF VALUE at the decision state:
+                                two-scale lexicographic squash of the acting
+                                seat's ab_value margin (bit-for-bit the
+                                mcts_vs_fixed leaf_eval='ab_value' formula) —
+                                the distillation target for a learned judge
 
 Shards are compressed .npz, ~250 games each, written to --out-dir. Workers
 are separate processes (spawn) with their own Env; everything is CPU and
@@ -41,6 +46,23 @@ import numpy as np
 MASK_BYTES = 36  # ceil(286/8)
 WIN_VP = 10
 _NO_ACTION = 0xFFFFFFFF
+_VP_W = 3e14  # catanatron value.base_fn public-VP weight (lexicographic)
+
+
+def _abv_label(env, cp: int, scale: float) -> float:
+    """The hybrid leaf value, mirroring MCTSvsFixed._expand leaf_eval='ab_value'.
+
+    Margin of the acting seat's native ab_value over the best opponent,
+    decomposed into the VP level and the fine level and squashed separately —
+    keep this in lockstep with mcts_vs_fixed.py (the search must see at
+    deploy time exactly the function the value head was distilled on)."""
+    v0 = env.ab_value(cp)
+    vo = max(env.ab_value(q) for q in range(4) if q != cp)
+    margin = v0 - vo
+    vp_part = np.round(margin / _VP_W)
+    fine_part = margin - vp_part * _VP_W
+    return float(0.75 * np.tanh(vp_part / 3.0)
+                 + 0.25 * np.tanh(fine_part / scale))
 
 
 def _play_games_worker(payload: dict) -> dict:
@@ -87,7 +109,8 @@ def _play_games_worker(payload: dict) -> dict:
     mask_buf = np.zeros(fc.MASK_WORDS, dtype=np.uint64)
     obs_buf = np.zeros(fc.OBS_SIZE, dtype=np.float32)
 
-    obs_l, act_l, mask_l, z_l, vps_l, seat_l = [], [], [], [], [], []
+    abv_scale = payload.get("abv_scale", 86e6)
+    obs_l, act_l, mask_l, z_l, vps_l, seat_l, abv_l = [], [], [], [], [], [], []
     fallbacks = 0
     decisions = 0
     winners = []
@@ -128,6 +151,7 @@ def _play_games_worker(payload: dict) -> dict:
             obs_l.append(obs_buf.astype(np.float16))
             act_l.append(np.uint16(teacher_a))
             mask_l.append(np.packbits(mask))
+            abv_l.append(np.float32(_abv_label(env, cp, abv_scale)))
             recs.append((len(obs_l) - 1, cp))
             decisions += 1
 
@@ -161,6 +185,7 @@ def _play_games_worker(payload: dict) -> dict:
         z=np.asarray(z_l, dtype=np.float16),
         vps=np.stack(vps_l) if vps_l else np.zeros((0, 4), np.uint8),
         seat=np.asarray(seat_l, dtype=np.uint8),
+        abv=np.asarray(abv_l, dtype=np.float32),
     )
     n_won = sum(1 for w in winners if w >= 0)
     return {"shard": str(shard), "games": len(winners), "decisions": decisions,
@@ -185,6 +210,10 @@ def main() -> None:
                         "policy while the teacher labels its states; seats "
                         "1-3 are AB. Empty = teacher mode (AB plays + labels "
                         "all seats).")
+    p.add_argument("--abv-scale", type=float, default=86e6,
+                   help="fine-part tanh scale for the recorded abv label; "
+                        "MUST match the --ab-value-scale the search will use "
+                        "(gate config: 86e6).")
     p.add_argument("--seed", type=int, default=20260605)
     p.add_argument("--nice", type=int, default=10,
                    help="os.nice for workers so GPU training keeps priority.")
@@ -201,6 +230,7 @@ def main() -> None:
         "ab_depth": args.ab_depth, "ab_prune": args.ab_prune,
         "student_ckpt": args.student_ckpt or None,
         "chance_mode": 1 if args.catanatron_chance else 0,
+        "abv_scale": args.abv_scale,
         "seed": args.seed * 1_000_003 + i * 7919, "nice": args.nice,
     } for i in range(n_shards)]
 
