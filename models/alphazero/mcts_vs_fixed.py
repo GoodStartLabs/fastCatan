@@ -54,6 +54,7 @@ class MCTSvsFixed:
         ab_value_scale: float = 30.0,
         learner_seat: int = LEARNER,
         catanatron_chance: bool = False,
+        opp_model: str = "alphabeta",
     ):
         self.net = net
         self.device = device
@@ -68,15 +69,38 @@ class MCTSvsFixed:
         self.leaf_eval = leaf_eval
         self.ab_value_scale = ab_value_scale
         self.learner = learner_seat   # tree decisions + POV (seat rotation)
-        self.opp = make_alphabeta_pick(
-            self.rng, ab_depth, ab_prune,
-            banned=(p2p_banned_words() if (suppress_p2p or catanatron_chance)
-                    else None),
-            chance_mode=1 if catanatron_chance else 0)
+        if opp_model == "net":
+            # STAGE-2 de-catanatronization: the in-tree opponent is the
+            # net's own masked-argmax policy (the AB clone, 78-80% top-1 vs
+            # the real AB) instead of native ab_decide. With leaf_eval='net'
+            # the search is then FULLY SELF-CONTAINED — no ab_value/ab_decide
+            # anywhere at inference. (The pre-IL net-modeled-opponent search
+            # flat-lined at 0%, but that net didn't model AB at all; the
+            # clone is a different regime.)
+            self.opp = self._net_opp
+        else:
+            self.opp = make_alphabeta_pick(
+                self.rng, ab_depth, ab_prune,
+                banned=(p2p_banned_words() if (suppress_p2p or
+                                               catanatron_chance) else None),
+                chance_mode=1 if catanatron_chance else 0)
 
         self.env = fastcatan.Env()
         self._mask_buf = np.zeros(MASK_WORDS, dtype=np.uint64)
         self._obs = np.zeros(OBS_SIZE, dtype=np.float32)
+        self._opp_obs = np.zeros(OBS_SIZE, dtype=np.float32)
+
+    @torch.no_grad()
+    def _net_opp(self, game_env, cp: int, legal) -> int:
+        """In-tree opponent pick: the net's argmax over the seat's legal set
+        (cp's POV obs — the clone trained on all four seats). Deterministic,
+        mirroring AlphaBeta's determinism; always lands in ``legal``."""
+        game_env.write_obs(cp, self._opp_obs)
+        obs = torch.from_numpy(self._opp_obs).unsqueeze(0).to(self.device)
+        logits, _v = self.net(obs)
+        row = logits[0].float().cpu().numpy()
+        best = max(legal, key=lambda a: row[a])
+        return int(best)
 
     # -------- env reads --------
 

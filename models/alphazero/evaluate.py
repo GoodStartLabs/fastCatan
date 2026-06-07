@@ -113,6 +113,12 @@ def main() -> None:
                         "(net prior + deterministic native heuristic leaves; "
                         "attacks leaf-noise saturation).")
     p.add_argument("--ab-value-scale", type=float, default=30.0)
+    p.add_argument("--model-opp", choices=["alphabeta", "net"],
+                   default="alphabeta",
+                   help="IN-TREE opponent model: 'net' = the net's masked "
+                        "argmax (stage-2 de-cat; with --leaf-eval net the "
+                        "search is fully self-contained). The TABLE opponent "
+                        "stays --opponent.")
     args = p.parse_args()
 
     ckpt = Path(args.ckpt)
@@ -131,7 +137,8 @@ def main() -> None:
                            dirichlet_frac=0.0, seed=args.seed, suppress_p2p=suppress,
                            ab_depth=args.ab_depth, ab_prune=args.ab_prune,
                            leaf_eval=args.leaf_eval,
-                           ab_value_scale=args.ab_value_scale)
+                           ab_value_scale=args.ab_value_scale,
+                           opp_model=args.model_opp)
     else:
         mcts = MCTS(net, device=args.device, sims=args.sims, c_puct=args.c_puct,
                     dirichlet_frac=0.0, seed=args.seed, suppress_p2p=suppress)
