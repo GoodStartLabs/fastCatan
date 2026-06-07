@@ -216,6 +216,14 @@ def main() -> None:
     p.add_argument("--abv-scale", type=float, default=86e6,
                    help="fine-part tanh scale for ab_two_scale targets; MUST "
                         "match the search's --ab-value-scale (gate: 86e6).")
+    p.add_argument("--block-shuffle", type=int, default=0,
+                   help="approximate-shuffle block size in SAMPLES (e.g. "
+                        "2000000). 0 = exact full-random sampling. Use for "
+                        "caches BIGGER THAN RAM: full-random batches degrade "
+                        "to NVMe random reads (640k-union cache 245G ran at "
+                        "7.8k smp/s = 46x slower); block mode streams one "
+                        "contiguous block into RAM, shuffles within, and "
+                        "permutes block order per epoch.")
     p.add_argument("--value-hidden", type=int, default=128,
                    help="value-head hidden width (128 was the underfit "
                         "bottleneck for the two-scale fine channel).")
@@ -282,14 +290,37 @@ def main() -> None:
 
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
+
+    arr_keys = [k for k in ("obs", "act", "mask", "z", "vps", "seat",
+                            "abv", "abm") if k in data]
+    train_sorted = np.sort(train_idx)
+
+    def batch_iter(ep_seed: int):
+        """Yields (data_source, idx) batches. Block mode trades exact
+        shuffling for sequential IO — mandatory for bigger-than-RAM caches."""
+        brng = np.random.default_rng(ep_seed)
+        if args.block_shuffle > 0:
+            B = args.block_shuffle
+            n_blocks = (len(train_sorted) + B - 1) // B
+            for b in brng.permutation(n_blocks):
+                blk = train_sorted[b * B:(b + 1) * B]
+                sub = {k: np.asarray(data[k][blk]) for k in arr_keys}
+                local = brng.permutation(len(blk))
+                for s in range(0, len(local) - args.batch_size + 1,
+                               args.batch_size):
+                    yield sub, local[s:s + args.batch_size]
+        else:
+            order = brng.permutation(train_idx)
+            for s in range(0, len(order) - args.batch_size + 1,
+                           args.batch_size):
+                yield data, np.sort(order[s:s + args.batch_size])
+
     t0 = time.time()
     step = 0
     net.train()
     for ep in range(1, args.epochs + 1):
-        order = rng.permutation(train_idx)
-        for s in range(0, len(order) - args.batch_size + 1, args.batch_size):
-            idx = np.sort(order[s:s + args.batch_size])
-            obs, act, mask, z = _batch(data, idx, args.device,
+        for src, idx in batch_iter(args.seed * 1000 + ep):
+            obs, act, mask, z = _batch(src, idx, args.device,
                                        args.value_target, args.abv_scale)
             logits, value = (net.forward_channels(obs) if multi_v
                              else net(obs))
