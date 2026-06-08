@@ -89,6 +89,7 @@ class MCTSvsFixed:
         self._mask_buf = np.zeros(MASK_WORDS, dtype=np.uint64)
         self._obs = np.zeros(OBS_SIZE, dtype=np.float32)
         self._opp_obs = np.zeros(OBS_SIZE, dtype=np.float32)
+        self.last_root_value = 0.0   # backed-up V(root) from the last choose()
 
     @torch.no_grad()
     def _net_opp(self, game_env, cp: int, legal) -> int:
@@ -256,6 +257,13 @@ class MCTSvsFixed:
             self._add_root_noise(root)
         for _ in range(self.sims):
             self._simulate(root)
+
+        # Backed-up root value: mean over all sims of the leaf values that
+        # flowed back to the root (sum W / total N). The stage-3 value target
+        # (stage3_gen) — a denoised, lookahead-aggregated estimate vs a single
+        # sparse outcome. Seat-0 POV, same [-1,1] scale as the leaf.
+        self.last_root_value = (float(root.W.sum() / root.total_N)
+                                if root.total_N > 0 else 0.0)
 
         counts = root.N.astype(np.float64)
         total = counts.sum()

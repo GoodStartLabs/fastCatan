@@ -69,18 +69,21 @@ def build_cache(data_dirs: list[Path]) -> dict:
             out["abv"] = np.lib.format.open_memmap(cache / "abv.npy", mode="r")
         if (cache / "abm.npy").exists():   # v4 shards (raw ab_value margin)
             out["abm"] = np.lib.format.open_memmap(cache / "abm.npy", mode="r")
+        if (cache / "rootv.npy").exists():  # stage-3 shards (MCTS root value)
+            out["rootv"] = np.lib.format.open_memmap(cache / "rootv.npy", mode="r")
         return out
     shards = sorted(s for d in data_dirs
                     for s in glob.glob(str(d / "shard_*.npz")))
     if not shards:
         raise FileNotFoundError(f"no shards under {data_dirs}")
     counts = []
-    has_abv = has_abm = True
+    has_abv = has_abm = has_rootv = True
     for s in shards:
         with np.load(s) as d:
             counts.append(d["act"].shape[0])
             has_abv = has_abv and ("abv" in d.files)
             has_abm = has_abm and ("abm" in d.files)
+            has_rootv = has_rootv and ("rootv" in d.files)
     n = int(sum(counts))
     cache.mkdir(exist_ok=True)
     obs = np.lib.format.open_memmap(cache / "obs.npy", mode="w+",
@@ -101,6 +104,9 @@ def build_cache(data_dirs: list[Path]) -> dict:
     abm = (np.lib.format.open_memmap(cache / "abm.npy", mode="w+",
                                      dtype=np.float64, shape=(n,))
            if has_abm else None)
+    rootv = (np.lib.format.open_memmap(cache / "rootv.npy", mode="w+",
+                                       dtype=np.float32, shape=(n,))
+             if has_rootv else None)
     o = 0
     for s, c in zip(shards, counts):
         with np.load(s) as d:
@@ -114,6 +120,8 @@ def build_cache(data_dirs: list[Path]) -> dict:
                 abv[o:o + c] = d["abv"]
             if abm is not None:
                 abm[o:o + c] = d["abm"]
+            if rootv is not None:
+                rootv[o:o + c] = d["rootv"]
         o += c
         print(f"[cache] {o}/{n}", flush=True)
     obs.flush(); act.flush(); mask.flush(); z.flush()
@@ -122,6 +130,8 @@ def build_cache(data_dirs: list[Path]) -> dict:
         abv.flush()
     if abm is not None:
         abm.flush()
+    if rootv is not None:
+        rootv.flush()
     np.savez(meta, n=n)
     print(f"[cache] built: {n} samples", flush=True)
     return build_cache(data_dirs)
@@ -185,6 +195,15 @@ def _batch(data, idx, device, value_target="sparse", abv_scale=86e6):
                                 -1.0, 1.0))
         zt = np.stack(cols, axis=1)
         z = torch.from_numpy(zt.astype(np.float32)).to(device)
+    elif value_target == "search_value":
+        # Stage-3 LEARNED-from-strong-play target: the hybrid's MCTS root
+        # value (stage3_gen rootv), already in [-1,1]. Denoised, lookahead-
+        # aggregated — the AlphaZero value target, vs the sparse outcome.
+        if "rootv" not in data:
+            raise KeyError("value-target search_value needs stage-3 shards "
+                           "with the 'rootv' field (generate via stage3_gen)")
+        z = torch.from_numpy(np.asarray(data["rootv"][idx],
+                                        dtype=np.float32)).to(device)
     else:
         z = torch.from_numpy(np.asarray(data["z"][idx], dtype=np.float32)).to(device)
     return obs, act, mask, z
@@ -202,7 +221,7 @@ def main() -> None:
     p.add_argument("--value-coef", type=float, default=1.0)
     p.add_argument("--value-target",
                    choices=["sparse", "vp_margin", "ab_value", "ab_two_scale",
-                            "ab_mixed"],
+                            "ab_mixed", "search_value"],
                    default="sparse",
                    help="vp_margin = dense final-VP margin (needs v2 shards "
                         "with seat field); tests the search-SNR hypothesis. "
@@ -236,6 +255,11 @@ def main() -> None:
                    default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--save-dir", type=str, default=str(CKPT_DIR / "il_ab_d1"))
+    p.add_argument("--init-from", type=str, default="",
+                   help="warm-start: load net_state from this checkpoint "
+                        "before training (arch must match --hidden / value "
+                        "head). Stage-3 fine-tunes the 640k clone on "
+                        "strong-play data; use a lower --lr (e.g. 3e-4).")
     args = p.parse_args()
 
     torch.manual_seed(args.seed)
@@ -257,6 +281,13 @@ def main() -> None:
                          value_channels=n_channels,
                          value_hidden=args.value_hidden,
                          value_skip_obs=args.value_skip_obs).to(args.device)
+    if args.init_from:
+        st = torch.load(args.init_from, map_location=args.device,
+                        weights_only=False)
+        missing, unexpected = net.load_state_dict(st["net_state"], strict=False)
+        print(f"[init] warm-started from {args.init_from} "
+              f"(missing={list(missing)}, unexpected={list(unexpected)})",
+              flush=True)
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr,
                             weight_decay=args.weight_decay)
     steps_per_epoch = len(train_idx) // args.batch_size
