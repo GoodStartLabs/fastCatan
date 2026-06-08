@@ -351,21 +351,43 @@ plays any seat on that seat's POV obs — opponents are driven from Python, exac
   but its sweep was **stood down** — see M4 for why capacity is moot for the gate that matters.
   Memory `arch-sweep-xl-running`.
 
-### M4 — Alpha-Beta Eval + Final Model
+### M4 — Alpha-Beta Eval + Final Model (gate restructured 2026-06-07)
 
-> Harness lives in `EVAL/AB/`, run in the **anaconda** 1084/286 env: the trained policy
-> plays seat RED via `EVAL/bridge/CatanatronBridge` inside Catanatron's engine vs
-> `AlphaBetaPlayer`. Catanatron is a **pinned git build** (`41ba0db`; root
-> `requirements.txt`, `EVAL/AB/REPRODUCIBILITY.md` §6), not PyPI.
+> **Two-tier gate (restructured 2026-06-07).** Development iterates on the
+> fast in-repo native AB; catanatron is the final exam only:
+>
+> 1. **Dev gate — native ladder (every iteration):** ≥200 games @ ≥512 sims
+>    vs the fixed-hole native AB-d2 (`Env.ab_decide`) via
+>    `models.alphazero.evaluate`; report the Wilson CI; promote on
+>    CI-low > 0.25. Calibration: the hybrid recipe scored 29.5% native-d2 vs
+>    32.5% bridge-d2, so native is the conservative proxy.
+> 2. **Final gate — catanatron bridge (ONCE, end of project):** ≥1000
+>    four-player games vs `AlphaBetaPlayer` (depth 2) through
+>    `EVAL/bridge/CatanatronBridge` inside Catanatron's engine (**pinned git
+>    build** `41ba0db`; root `requirements.txt`,
+>    `EVAL/AB/REPRODUCIBILITY.md` §6 — not PyPI), shuffled seating,
+>    `PYTHONHASHSEED` pinned. Thesis gate: **Wilson CI lower bound > 0.25.**
+>    Run only on the final self-contained model.
+>
+> **Self-containment requirement (what "the trained agent" means):** at
+> inference the agent's search may not call `ab_value` / `ab_decide` (or any
+> other catanatron-derived component) — learned prior + learned leaf value +
+> learned opponent model only. AB-generated games/labels (IL, distillation)
+> are training-time-only and in-bounds. De-catanatronization order:
+> (1) learned leaf value (ab_value distillation → `--leaf-eval net`),
+> (2) learned in-tree opponent model, (3) re-train the prior with the
+> learned value. Tracked in `EVAL/AB/README.md`.
 
 - [x] Tournament harness (`EVAL/AB/tournament.py` + `EVAL/AB/policy.py`): policy-via-bridge vs `AlphaBetaPlayer`/`ValueFunctionPlayer`/`RandomPlayer`, win rate + 95% Wilson CI + the thesis gate (CI-low > 0.25) → `EVAL/AB/results/*.json`. Pipeline validated end-to-end on the 1084/286 interface (`test_obs_identity` 5/5 encoder↔C++ parity; uniform-bridge games vs Value/AlphaBeta complete — `EVAL/AB/results/validation_1084.md`).
 - [~] Final model vs Alpha-Beta over ≥1000 four-player games. **Harness ran live (2026-05-27) on the 1084 M2 seed `ppo_1084_50m`: 0/200 vs AlphaBeta** (depth 2, `--ab-prune`, `--no-trades`, CI [0, 0.019], gate FAIL) and 0/5 with trades. **Verified the 0 is real, not a EVAL/bridge/plumbing bug (2026-05-28):** the *same model, same harness, swapping AlphaBeta→`RandomPlayer`* scores **179/200 (89.5%)**, and **95.5%** native vs random — so the bridge faithfully conveys the model's skill; a random-trained PPO genuinely cannot beat AlphaBeta. AlphaBeta ≈6.4 s/game unpruned (~1.8 h/1000); use `--ab-prune` (~1.4 s/game).
 - [~] ⚠️ **Re-test on the M3 self-play model (2026-06-01): STILL 0/200 vs AlphaBeta.** The stronger model now exists — `sp_league_200m_512/selfplay_final.zip` (200M-step league self-play off the 512×512×256 seed, league gate r3=0.66 PASS, 86.7% vs-random) — and it scored **0/200** (depth 2, `--ab-prune`, `--no-trades`, CI [0, 0.019]; `EVAL/AB/results/tournament_ppo_alphabeta_20260601_100313.json`), the same as the seed. **So "train a stronger PPO via self-play" did NOT crack the gate** — the gains don't transfer to minimax play. **The open path to >25% is no longer "more self-play":** (1) diagnose the 0 first — same model vs the weaker `ValueFunctionPlayer` (`--opponent value`) + earlier snapshots vs AlphaBeta, to confirm a real skill wall vs a bridge-seat artifact; (2) put AlphaBeta/ValueFunction bots **into the self-play opponent pool** (it's currently PPO-snapshots only, so the agent never trains against lookahead); (3) add **MCTS/AlphaZero-style search at inference** (the policy net as a prior) — the standard way pure policies beat minimax. See `models/selfplay/PLAN.md` + memory `m4-alphabeta-blocked-on-m3`.
 - [x] **Native AlphaBeta opponent — unblocks path (2) (2026-06-02).** AlphaBeta is now ported into the fastcatan C++ engine (`src/catan/search.cpp`, `Env.ab_decide`/`ab_value`) — a faithful catanatron `AlphaBetaPlayer` port (value fn matches `base_fn` to **1.9e-16**; deterministic moves are tie-for-optimal with catanatron — `EVAL/AB/test_native_ab_fidelity.py`). It runs ~750× faster than the bridge AB (depth-1 ~45k learner-steps/s, depth-2 ~5k), so the learner can **train directly against AlphaBeta**: `train_ppo.py --opponent alphabeta [--ab-depth 1] [--ab-prune]`. This is the *opponent-in-pool* lever; whether it transfers to this bridge gate is the next experiment. Fidelity + usage in `EVAL/AB/README.md`, memory `native-alphabeta-training-opponent`. (Bonus: doing this surfaced + fixed a `EVAL/bridge/state_mirror.py` drift that had silently broken the inject path — differential 25/25, bridge 281/281 green again; memory `bridge-state-mirror-resync`.)
 - [~] ⚠️ **3rd model + native-AB depth ladder — wall reconfirmed, capacity/time ruled out (2026-06-03).** A *different, stronger* self-play model — a 512×512×256 **sliding-window** arch-sweep cell (only 6M steps but **98.5% vs random**, `models/checkpoints/sweep/lr0.0003_ent0.01_int1000000_arch512-512-256_constant_klnone/snap_6021120.zip`) — ALSO scores **0/100 vs catanatron-AB d2** on the official bridge (`--no-trades`, CI [0, 0.037], `EVAL/AB/results/tournament_ppo_alphabeta_20260603_022546.json`). So the wall holds across two unrelated self-play recipes (200M league + 6M sliding-window) **and** across capacity (cf. M3: 512≈256) → robustly **not a model-quality fluke**. Mapped the **native** AB port (`Env.ab_decide`) as a depth ladder for this model: seed 4%/4%, model d1 **48.7%**, d2 **22%** — i.e. graded transfer to the *native* port, BUT (a) **confounded by trades ON** (`FastCatanEnv` has no `--no-trades` flag, and this trade-trained model banks trade exploits the bridge forbids — does **not** prove the native port is weaker, whose `ab_value` fidelity is separately validated) and (b) still 0 vs catanatron. **Conclusion: more network capacity and more self-play time monotonically lift vs-random / native-AB strength but do NOT transfer to depth-2 catanatron — the M4 lever is search at inference (path 3), not a bigger or longer-trained reactive policy.** Memory `arch-sweep-xl-running`, `m4-alphabeta-blocked-on-m3`, `native-alphabeta-training-opponent`.
-- [~] 10⁸-step soak test for stability: harness done (`EVAL/AB/soak.py` — finite-obs + mask-integrity + RSS-leak checks); smoked green (10k steps, RSS flat 1.00×); full run pending (~24 min at ~70k steps/s).
+- [x] ✅ **10⁸-step soak test for stability — full run PASS (2026-06-07).** `EVAL/AB/soak.py` (finite-obs + mask-integrity + RSS-leak checks, random-legal policy, seed 7): 10⁸ steps / 99,244 episodes, **0 no-winner, 0 per-step violations**, seat wins balanced [24636, 24909, 24703, 24996], 78.4k steps/s (21.3 min), RSS base 40.2 → final 22.3 MiB (growth 0.55×, guard <1.5× OK) → `DEBUG/logs/soak_1e8_20260607.log`.
 - [x] Reproducibility doc: `EVAL/AB/REPRODUCIBILITY.md` (toolchain, build flags + `editable.rebuild=true`, anaconda env, catanatron git pin, seeds, training config).
-- **Thesis gate: >25% win rate vs Alpha-Beta with 95% CI** (Wilson CI lower bound > 0.25).
+- [x] 🏆 **HYBRID search recipe passes the (old, single-tier) gate at 200 games (2026-06-06)** — IL d2-clone prior (160k AB-vs-AB games, dense vp_margin values) + native `ab_value` leaves (two-scale lexicographic squash) + 512-sim stochastic search + catanatron-faithful in-tree opponent model + TRUE-seat sync: **65/200 = 32.5% [26.4–39.3] vs catanatron AB-d2** (CI-low 26.4 > 25, shuffled seating; `EVAL/AB/results/tournament_mcts_alphabeta_20260606_152919.json`). Native ladders: d1 29.0% [25.5–32.8] pooled ≥512 sims, d2 29.5% [23.6–36.2] @512. **This is the hybrid REFERENCE result, not the thesis-final agent** — it calls `ab_value`/`ab_decide` at inference, violating the self-containment requirement above. Full arc: `EVAL/AB/README.md` + root README campaign section.
+- [~] **Gate restructured; de-catanatronization IN PROGRESS (2026-06-07).** The official 1000-game run of the hybrid (interrupted at 150/1000, 67 wins = 44.7%) is **superseded — not resumed**; its 200-game PASS stands as the hybrid reference. The ≥1000-game bridge run moves to the very end, on the self-contained model. Work order: (1) learned leaf value — distill the two-scale `ab_value` squash into the value head (`il_dataset` `abv` labels + `il_pretrain --value-target ab_value`, commit 7cf5193) and search with `--leaf-eval net`; (2) learned in-tree opponent model (net argmax replaces `ab_decide`); (3) re-train the prior with the learned value (search-generated targets). Each step gated by the native dev ladder.
+- **Thesis gate (final tier): self-contained agent, ≥1000 bridge games vs Alpha-Beta d2, Wilson CI lower bound > 0.25.** Dev tier: native AB-d2 ladder (≥200 games, ≥512 sims), CI-low > 0.25 to promote.
 
 ## Top 3 Risks
 
@@ -407,4 +429,5 @@ At 5×10⁷ steps/sec with N=4096 envs, a `step()` call is ~80 µs of native wor
 - **Determinism:** `ctest -R perft` runs fixed-seed/fixed-policy 100k-step trajectory, compares hash to the committed value.
 - **Throughput:** `python -m fastcatan.benchmarks.throughput --n-envs 4096 --steps 100000 --warmup 1000` reports steps/sec. Run 3× under `numactl --cpubind=0 --membind=0`; take median. Gate on per-milestone target.
 - **RL smoke test (M2 onward):** `python scripts/ppo_smoke.py` — 1M-step PPO run vs random opponent, must reach >90% win rate.
-- **Final (M4):** `python scripts/tournament.py --agent-a ppo_final --agent-b alphabeta --n-games 1000` reports win rate + 95% CI.
+- **Dev gate (M4, per iteration):** `python -m models.alphazero.evaluate --ckpt <ckpt> --opponent alphabeta --ab-depth 2 --sims 512 --games 200` → win rate + Wilson CI vs the native AB (self-contained config only: no `ab_value` leaves, no `ab_decide` opponent model).
+- **Final (M4, once, end of project):** `PYTHONHASHSEED=0 PYTHONPATH=.:EVAL python -m AB.tournament --policy mcts --ckpt <final> --games 1000 --opponent alphabeta --ab-depth 2 --ab-prune --no-trades` → thesis win rate + 95% CI (Wilson CI-low > 0.25).

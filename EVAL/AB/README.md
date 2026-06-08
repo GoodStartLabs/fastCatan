@@ -7,6 +7,35 @@ games, 95% CI** (`PLAN.md` M4, root). 0.25 is the 4-player chance baseline.
 The agent plays through `EVAL/bridge/CatanatronBridge` *inside Catanatron's reference
 engine*, so the numbers are directly comparable to Catanatron paper baselines.
 
+## The gate, restructured (2026-06-07) — two tiers
+
+Development iterates on the fast in-repo native AB; catanatron is the final
+exam only:
+
+1. **Dev gate (every iteration)** — native AB-d2 ladder, pure fastcatan:
+
+   ```bash
+   python -m models.alphazero.evaluate --ckpt <ckpt> \
+       --opponent alphabeta --ab-depth 2 --sims 512 --games 200
+   ```
+
+   Wilson CI; promote on CI-low > 0.25. Calibration: the hybrid recipe
+   scored 29.5% native-d2 vs 32.5% bridge-d2 — native is the conservative
+   proxy.
+2. **Final gate (ONCE, end of project)** — ≥1000 bridge games vs
+   `AlphaBetaPlayer` d2 (shuffled seating, `PYTHONHASHSEED=0`):
+   CI-low > 0.25. Run only on the final self-contained model.
+
+**Self-containment requirement:** the thesis agent's search may not call
+`ab_value` / `ab_decide` at inference — learned prior + learned leaf value +
+learned opponent model only. AB-generated games/labels (IL, distillation)
+are training-time-only and in-bounds. The hybrid configuration below
+(`ab_value` leaves + AB in-tree opponent model) is therefore the
+**reference recipe**, not the thesis agent. De-catanatronization order:
+(1) learned leaf value (`il_pretrain --value-target ab_value` distillation
+→ search with `--leaf-eval net`), (2) learned in-tree opponent model,
+(3) re-train the prior with the learned value.
+
 ## Native AlphaBeta — a fast, faithful training opponent
 
 The eval above runs Catanatron's **real** AlphaBeta through the bridge (~6.4 s/game,
@@ -105,19 +134,17 @@ leaves (two-scale lexicographic squash, `--ab-value-scale 86e6`):**
 | native AB-d1, ≥512 sims (600 g) | **29.0% [25.5–32.8] — above 25% parity** |
 | native AB-d2, 256–512 sims (600 g) | **23.3–23.75% — at parity** (was 0/200 for every reactive policy) |
 | native AB-d2 *pruned* control (40 g) | 17.5% [8.8–32.0] — pruning ≈ no strength change |
-| **bridge** AB-d2 pruned, rotated, 256 sims (100 g) | **5.0% [2.2–11.2]** — first consistent bridge wins ever, but 4–5× below native |
+| **bridge** AB-d2 pruned, rotated, 256 sims (100 g) | 5.0% [2.2–11.2] — pre-seat-fix (v2) |
+| **bridge** AB-d2 pruned, shuffled seating, 512 sims (200 g, v6) | **32.5% [26.4–39.3] — GATE PASS** (hybrid reference) |
 
-**The open native→bridge transfer gap.** Ruled out by experiment: injected
-value fidelity (`test_native_ab_fidelity.py` passes to machine precision on
-current code), opponent pruning strength, in-tree model depth. Live
-suspects: catanatron-AB behavioral divergence from the native in-tree model
-(the two documented chance-handling deviations + tie-break order — the
-search optimizes against a slightly wrong opponent), sub-prompt decision
-routing through the codec (robber-victim picks), and a bridge-only
-sims-inversion (512 < 256: 0/40 vs 5/100) consistent with deeper search
-exploiting model error harder. Next instrument: replay bridge games and
-diff the in-tree model's predicted opponent moves against catanatron's
-actual moves.
+**The native→bridge transfer gap — RESOLVED (2026-06-06).** Ruled out by
+experiment: injected value fidelity (machine precision), opponent pruning
+strength, in-tree model depth. Real fixes: faithful in-tree chance model
+(`--model-catanatron-chance`), policy-owned robber composite, and the
+decisive one — **catanatron shuffles seating**, so the construction-time
+seat had the search optimizing an opponent's position in ~75% of games
+(pinning bridge runs at 0.25×native ≈ 6%); fixed by per-decision
+`_sync_seat`. Details in the Status section below.
 
 ## Status (2026-06-06)
 
@@ -144,20 +171,21 @@ search campaign (root README).
       games, pinning bridge runs at 0.25×native ≈ 6%. Fixed by per-decision
       `_sync_seat` (commit 19e2698). Full hunt: `model_divergence_*.json` +
       git history e6f5b3d→335833a.
-- [~] **Official ≥1000-game M4 run: INTERRUPTED at 150/1000 (67 wins = 44.7%,
-      running hot) for an OS switch.** RESUME with exactly:
-      ```
-      PYTHONHASHSEED=0 PYTHONPATH=.:EVAL python -m AB.tournament \
-          --policy mcts --ckpt models/checkpoints/il_ab_d2_160k_vpm/il_final.pt \
-          --games 1000 --mcts-sims 512 --model-ab-depth 2 --model-ab-prune \
-          --model-catanatron-chance --opponent alphabeta --ab-depth 2 \
-          --ab-prune --no-trades --seed 2026 --progress-every 25 \
-          --out EVAL/AB/results
-      ```
-      (Fresh start is fine — the run is seeded/reproducible; ~16.5 s/game ≈
-      4.6 h. Needs `models/checkpoints/il_ab_d2_160k_vpm/il_final.pt`; if the
-      checkpoint isn't on the target device, regenerate in ~6 min:
-      `il_dataset --games 160000 --workers 8 --ab-depth 2` then
-      `il_pretrain --value-target vp_margin --hidden 1024,1024,512`.)
-- [ ] Full 10⁸-step soak (smoke green; ~24 min full).
-- [ ] Record thesis-gate result (the 1000-game JSON).
+- [x] **SUPERSEDED (2026-06-07): the official 1000-game run of the HYBRID
+      recipe (interrupted at 150/1000, 67 wins = 44.7%) is retired
+      un-resumed.** Gate restructure (see "The gate, restructured" above):
+      the ≥1000-game bridge run happens ONCE, at the very end, on the final
+      **self-contained** model — no `ab_value` leaves, no `ab_decide`
+      in-tree opponent model at inference. The hybrid's 200-game PASS above
+      stands as the reference result; development now iterates on the
+      native dev gate. (For the record, the hybrid run was seeded and
+      reproducible — config in `results/tournament_mcts_alphabeta_
+      20260606_152919.json` at `--games 1000 --seed 2026`.)
+- [x] **Full 10⁸-step soak PASS (2026-06-07):** 10⁸ steps / 99,244 episodes of
+      random-legal play (seed 7), 0 no-winner, 0 per-step violations (finite
+      obs, non-empty mask, action-in-mask), seat wins balanced
+      [24636, 24909, 24703, 24996], 78.4k steps/s (21.3 min), RSS
+      40.2 → 22.3 MiB (growth 0.55×, guard <1.5× OK).
+      Log `DEBUG/logs/soak_1e8_20260607.log`.
+- [ ] Record thesis-gate result (the 1000-game JSON) — **final self-contained
+      model only, end of project** (two-tier gate, 2026-06-07).

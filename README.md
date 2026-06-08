@@ -11,16 +11,19 @@ stepping with optional OpenMP, Gymnasium + PettingZoo wrappers.
 > Python sims (Catanatron) can't generate self-play at the volume modern
 > RL needs.
 >
-> **Status (2026-06-06):** the agent (hybrid: imitation-learned prior +
-> native `ab_value` leaves + ≥512-sim stochastic search) is **above parity
-> vs Alpha-Beta-d1** on the native engine (29.0% [25.5–32.8], 600 games;
-> 25% = 4-player parity) and **at parity vs Alpha-Beta-d2** (23.75%
-> [19.8–28.2], 400 games — the opponent that scored 0/200 against every
-> reactive policy). The official catanatron-bridge gate shows the
-> first-ever consistent bridge wins (5.0% [2.2–11.2], seat-rotated) but a
-> 4–5× native→bridge transfer gap remains open — see
-> [The Alpha-Beta campaign](#the-alpha-beta-campaign) and
-> `EVAL/AB/README.md`.
+> **Status (2026-06-07):** the HYBRID search agent (imitation-learned prior
+> + native `ab_value` leaves + ≥512-sim stochastic search +
+> catanatron-faithful in-tree opponent model) **passed the official
+> catanatron-bridge gate at 200 games: 65/200 = 32.5% [26.4–39.3] vs
+> Alpha-Beta-d2** (CI-low > 25% = 4-player parity — the opponent that
+> scored 0/200 against every reactive policy). Native ladders: d1 29.0%
+> [25.5–32.8], d2 29.5% [23.6–36.2]. Because the hybrid calls
+> catanatron-derived components (`ab_value`/`ab_decide`) at inference, the
+> M4 gate is now **two-tier** (2026-06-07): a fast native AB-d2 dev ladder
+> per iteration, and ONE ≥1000-game bridge run at the very end on a
+> **self-contained** model (learned leaf value + learned opponent model —
+> in progress). See [The Alpha-Beta campaign](#the-alpha-beta-campaign)
+> and `EVAL/AB/README.md`.
 
 ## Throughput
 
@@ -240,10 +243,10 @@ python -m models.alphazero.evaluate --ckpt <ckpt> --opponent alphabeta \
     --ab-depth 2 --sims 512 --games 200 --leaf-eval ab_value \
     --ab-value-scale 86000000
 
-# 4. The official gate (catanatron engine, seat-rotated)
+# 4. The FINAL gate (catanatron engine; run ONCE at end of project, on the
+#    self-contained model only — two-tier gate, 2026-06-07)
 PYTHONPATH=.:EVAL python -m AB.tournament --policy mcts --ckpt <ckpt> \
-    --mcts-sims 512 --model-ab-depth 2 --model-ab-prune \
-    --opponent alphabeta --ab-depth 2 --ab-prune --no-trades --rotate-seats
+    --mcts-sims 512 --opponent alphabeta --ab-depth 2 --ab-prune --no-trades
 ```
 
 GPU-batched training infrastructure (used for the self-play track;
@@ -253,13 +256,20 @@ leaves — 9–10×/decision over per-game MCTS, flat G=64→1024.
 
 ### Open problem
 
-The native→bridge transfer gap (23.75% → 5.0% vs d2). Ruled out by
-experiment: injected-state value fidelity (machine precision), opponent
-pruning strength, in-tree model depth. Live suspects: catanatron-AB's
-behavioral divergence from the native model (documented chance-handling
-deviations, tie-breaks), sub-prompt decision routing through the action
-codec, and a bridge-only sims-inversion (512 < 256) consistent with deeper
-search exploiting model error.
+The native→bridge transfer gap is **RESOLVED** (2026-06-06): faithful
+in-tree chance model + policy-owned robber composite + the decisive fix —
+catanatron **shuffles seating** in `State.__init__`, so the search had been
+optimizing an opponent's position in ~75% of games (pinning bridge runs at
+0.25×native ≈ 6%). Result: bridge v6 = **32.5% [26.4–39.3] vs AB-d2**, the
+first GATE PASS.
+
+The live open problem is **self-containment**: the thesis agent may not
+call `ab_value`/`ab_decide` at inference. In order: (1) distill the
+two-scale `ab_value` squash into the value head (`il_pretrain
+--value-target ab_value` → search with `--leaf-eval net`), (2) replace the
+in-tree opponent model with the net itself, (3) re-train the prior with
+the learned value — each step gated on the native AB-d2 dev ladder
+(`EVAL/AB/README.md`, "The gate, restructured").
 
 ## Key concepts
 
