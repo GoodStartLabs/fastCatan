@@ -17,11 +17,18 @@
 set -euo pipefail
 
 REPO=${REPO:-$HOME/fastCatan}
-CONDA_SH=${CONDA_SH:-$HOME/miniforge3/etc/profile.d/conda.sh}
 : "${CMD:?pass the training command via --export=ALL,CMD=\"...\"}"
 
-source "$CONDA_SH"
-conda activate catan
+# Env activation: pass VENV=/path/to/venv for a python-3.12 venv, else the
+# conda env `catan` is activated (CONDA_SH = conda's profile.d script).
+VENV=${VENV:-}
+CONDA_SH=${CONDA_SH:-$HOME/miniforge3/etc/profile.d/conda.sh}
+if [[ -n "$VENV" ]]; then
+  source "$VENV/bin/activate"
+else
+  source "$CONDA_SH"
+  conda activate catan
+fi
 cd "$REPO"
 
 export PYTHONHASHSEED=0

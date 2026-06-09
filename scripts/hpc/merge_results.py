@@ -34,8 +34,8 @@ except Exception:  # standalone fallback (same math)
 
 _CONFIG_KEYS = [
     "ckpt", "policy", "algo", "n_agents", "n_ab", "mcts_sims", "leaf_eval",
-    "model_ab_depth", "model_ab_prune", "deterministic", "enable_trades",
-    "ab_depth", "ab_prune", "opponent",
+    "model_ab_depth", "model_ab_prune", "model_opp", "deterministic",
+    "enable_trades", "ab_depth", "ab_prune", "opponent",
 ]
 
 

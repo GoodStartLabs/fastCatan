@@ -18,14 +18,21 @@
 set -euo pipefail
 
 REPO=${REPO:-$HOME/fastCatan}
-CONDA_SH=${CONDA_SH:-$HOME/miniforge3/etc/profile.d/conda.sh}
 GAMES_PER_SHARD=${GAMES_PER_SHARD:-50}
 BASE_SEED=${BASE_SEED:-42}
 DRIVER=${DRIVER:-AB.mixed_tournament}     # AB.mixed_tournament | AB.tournament
 EXTRA_ARGS=${EXTRA_ARGS:-}
 
-source "$CONDA_SH"
-conda activate catan
+# Env activation: pass VENV=/path/to/venv for a python-3.12 venv, else the
+# conda env `catan` is activated (CONDA_SH = conda's profile.d script).
+VENV=${VENV:-}
+CONDA_SH=${CONDA_SH:-$HOME/miniforge3/etc/profile.d/conda.sh}
+if [[ -n "$VENV" ]]; then
+  source "$VENV/bin/activate"
+else
+  source "$CONDA_SH"
+  conda activate catan
+fi
 cd "$REPO"
 
 SEED=$((BASE_SEED + SLURM_ARRAY_TASK_ID * GAMES_PER_SHARD))
