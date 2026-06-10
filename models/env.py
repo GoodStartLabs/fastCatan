@@ -70,6 +70,29 @@ def _legal_action_ids(mask_words: np.ndarray) -> list[int]:
     return out
 
 
+def _p2p_trade_mask_bool() -> np.ndarray:
+    """bool[NUM_ACTIONS] marking every player-to-player (p2p) trade action.
+
+    AND-NOT this off a legal mask to forbid p2p trading; bank/port *maritime*
+    trades (TRADE_BASE) stay legal. This is the canonical thesis ``--no-trades``
+    ablation — AlphaBeta has no p2p trade model, so the M4 gate has always run
+    p2p-off (see the trades memories). Mirrors models/selfplay/selfplay_env.py
+    so models/ stays self-contained."""
+    a = fastcatan.action
+    ids = (
+        list(range(a.TRADE_ADD_GIVE_BASE, a.TRADE_ADD_GIVE_BASE + 5))
+        + list(range(a.TRADE_ADD_WANT_BASE, a.TRADE_ADD_WANT_BASE + 5))
+        + [a.TRADE_OPEN, a.TRADE_ACCEPT, a.TRADE_DECLINE]
+        + list(range(a.TRADE_CONFIRM_BASE, a.TRADE_CONFIRM_BASE + 4))
+        + [a.TRADE_CANCEL]
+    )
+    m = np.zeros(NUM_ACTIONS, dtype=bool)
+    for i in ids:
+        if i < NUM_ACTIONS:
+            m[i] = True
+    return m
+
+
 class FastCatanEnv(gym.Env):
     """Single-agent Catan env, learner = seat 0; opponents pluggable.
 
@@ -90,6 +113,7 @@ class FastCatanEnv(gym.Env):
         opponent: str = "random",
         ab_depth: int = 2,
         ab_prune: bool = False,
+        suppress_p2p_trade: bool = False,
     ):
         super().__init__()
         self._env = fastcatan.Env()
@@ -101,6 +125,14 @@ class FastCatanEnv(gym.Env):
         self._opponent = str(opponent)
         self._ab_depth = int(ab_depth)
         self._ab_prune = bool(ab_prune)
+        # --no-trades ablation: AND-NOT p2p trade actions out of every seat's mask
+        # (learner AND random opponents) so the p2p trade sub-phase is never
+        # entered; maritime bank/port trades stay. Default off = full game.
+        self._p2p_bool = _p2p_trade_mask_bool() if suppress_p2p_trade else None
+        self._banned_ids = (
+            frozenset(int(i) for i in np.nonzero(self._p2p_bool)[0])
+            if self._p2p_bool is not None else frozenset()
+        )
 
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(OBS_SIZE,), dtype=np.float32
@@ -152,6 +184,11 @@ class FastCatanEnv(gym.Env):
             if not legal:
                 # No legal actions — should not happen; treat as terminal.
                 return True, self._terminal_reward()
+            if self._banned_ids:
+                # Opponents obey --no-trades too; never strand a seat.
+                filtered = [a for a in legal if a not in self._banned_ids]
+                if filtered:
+                    legal = filtered
             action = self._opponent_action(legal)
             _, done = self._env.step(action)
             if done:
@@ -203,7 +240,13 @@ class FastCatanEnv(gym.Env):
 
     def action_masks(self) -> np.ndarray:
         # Straight mask read; the compose cap is baked into the C++ mask (state.hpp).
-        return _unpack_mask(self._read_mask())
+        m = _unpack_mask(self._read_mask())
+        if self._p2p_bool is not None:
+            # Forbid p2p trades (maritime stays); never strand the learner.
+            filtered = m & ~self._p2p_bool
+            if filtered.any():
+                return filtered
+        return m
 
 
 def make_env(
@@ -211,12 +254,14 @@ def make_env(
     opponent: str = "random",
     ab_depth: int = 2,
     ab_prune: bool = False,
+    suppress_p2p_trade: bool = False,
 ):
     """Factory for SB3 make_vec_env / SubprocVecEnv."""
 
     def _thunk():
         return FastCatanEnv(
-            seed=seed, opponent=opponent, ab_depth=ab_depth, ab_prune=ab_prune
+            seed=seed, opponent=opponent, ab_depth=ab_depth, ab_prune=ab_prune,
+            suppress_p2p_trade=suppress_p2p_trade,
         )
 
     return _thunk

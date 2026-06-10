@@ -45,6 +45,8 @@ models/checkpoints/alphazero_batched_*/
 models/checkpoints/il_*/
 models/datasets/
 DEBUG/logs/*.log
+# benchmark training logs are bulky tqdm/SB3 noise — keep the JSON/summary, not the log
+models/benchmarks/**/run.log
 /models/checkpoints
 /AB/results
 EVAL/AB/results/tournament_mcts_alphabeta_20260606_122054.json

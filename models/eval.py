@@ -15,7 +15,9 @@ M2 gate: win rate Wilson 95% CI lower bound > 0.90.
 from __future__ import annotations
 
 import argparse
+import json
 import math
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -23,7 +25,7 @@ import numpy as np
 import torch
 
 from models.env import FastCatanEnv, NUM_ACTIONS
-from models.ckpt import verify_stamp
+from models.ckpt import verify_stamp, _fingerprint
 
 
 PickAction = Callable[[np.ndarray, np.ndarray], int]
@@ -164,6 +166,23 @@ def main() -> None:
                    help="MuZero MCTS simulations per move.")
     p.add_argument("--max-steps", type=int, default=5000,
                    help="Per-game step cap (game counted as no-winner past cap).")
+    p.add_argument("--no-trades", action="store_true",
+                   help="Suppress player-to-player trades for the learner AND the "
+                        "random opponents (maritime bank/port trades stay). The "
+                        "canonical thesis ablation; match it to how the agent was "
+                        "trained.")
+    p.add_argument("--out", type=str, default=None,
+                   help="Write a rich JSON result (win rate, CI, seat dist, full "
+                        "metadata) to this path so the run never has to be repeated. "
+                        "Aggregate many with models/benchmarks/summarize.py.")
+    p.add_argument("--tag", type=str, default=None,
+                   help="Free-text label stored in the JSON (e.g. '50M vs random').")
+    # Optional training provenance (the orchestrator passes these so the summary
+    # table can show train steps / time / net arch). Purely descriptive.
+    p.add_argument("--train-steps", type=int, default=None)
+    p.add_argument("--train-seconds", type=float, default=None)
+    p.add_argument("--train-net-arch", type=str, default=None)
+    p.add_argument("--train-num-envs", type=int, default=None)
     args = p.parse_args()
 
     ckpt = Path(args.ckpt)
@@ -171,7 +190,7 @@ def main() -> None:
         raise FileNotFoundError(ckpt)
 
     pick = build_agent(args.algo, ckpt, args.deterministic, args.sims)
-    env = FastCatanEnv(seed=args.seed)
+    env = FastCatanEnv(seed=args.seed, suppress_p2p_trade=args.no_trades)
 
     wins = 0
     seat_wins = [0, 0, 0, 0]
@@ -191,12 +210,54 @@ def main() -> None:
     n = args.games - no_winner
     lo, hi = wilson_ci(wins, n)
     rate = wins / n if n else 0.0
+    gate_pass = lo > 0.90
+    trades = "off (p2p suppressed, maritime on)" if args.no_trades else "on"
+
     print(f"\n=== Eval results ({args.algo}) ===")
     print(f"ckpt: {ckpt}")
+    print(f"opponent: random | trades: {trades} | "
+          f"action={'argmax' if args.deterministic else 'sample'}")
     print(f"games (winnered): {n}/{args.games} (no-winner: {no_winner})")
     print(f"learner win rate: {rate:.4f}  95% CI [{lo:.4f}, {hi:.4f}]")
     print(f"seat distribution: {seat_wins}")
-    print(f"M2 gate (>0.90 CI low): {'PASS' if lo > 0.90 else 'FAIL'}")
+    print(f"M2 gate (>0.90 CI low): {'PASS' if gate_pass else 'FAIL'}")
+
+    if args.out:
+        result = {
+            "algo": args.algo,
+            "tag": args.tag,
+            "ckpt": str(ckpt),
+            "opponent": "random",
+            "trades": "off" if args.no_trades else "on",
+            "no_trades": bool(args.no_trades),
+            "deterministic": bool(args.deterministic),
+            "games_requested": args.games,
+            "games_scored": n,
+            "no_winner": no_winner,
+            "wins": wins,
+            "win_rate": rate,
+            "ci95_low": lo,
+            "ci95_high": hi,
+            "m2_gate_pass": gate_pass,
+            "seat_wins": seat_wins,
+            "eval_seed": args.seed,
+            "max_steps": args.max_steps,
+            "sims": args.sims if args.algo == "muzero" else None,
+            "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "env": _fingerprint(),
+        }
+        if any(v is not None for v in (args.train_steps, args.train_seconds,
+                                       args.train_net_arch, args.train_num_envs)):
+            result["train"] = {
+                "total_steps": args.train_steps,
+                "train_seconds": args.train_seconds,
+                "net_arch": args.train_net_arch,
+                "num_envs": args.train_num_envs,
+            }
+        out = Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(result, indent=2) + "\n")
+        print(f"[eval] saved result -> {out}")
 
 
 if __name__ == "__main__":

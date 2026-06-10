@@ -32,13 +32,14 @@ def _mask_fn(env):
 
 def _make_env(
     seed: int, shaped: bool, shaping_coef: float, gamma: float,
-    opponent: str, ab_depth: int, ab_prune: bool,
+    opponent: str, ab_depth: int, ab_prune: bool, suppress_p2p_trade: bool,
 ):
     def _thunk():
         # VP-only potential shaping (models/env_shaped.py) when --shaped; its
         # gamma must match the PPO gamma so the shaping discount matches the
         # learner's return. Else the bare sparse-terminal env.
-        opp = dict(opponent=opponent, ab_depth=ab_depth, ab_prune=ab_prune)
+        opp = dict(opponent=opponent, ab_depth=ab_depth, ab_prune=ab_prune,
+                   suppress_p2p_trade=suppress_p2p_trade)
         if shaped:
             e = VPShapedEnv(seed=seed, shaping_coef=shaping_coef, gamma=gamma, **opp)
         else:
@@ -55,10 +56,10 @@ def _make_env(
 def _build_vec_env(
     num_envs: int, base_seed: int, use_subproc: bool,
     shaped: bool, shaping_coef: float, gamma: float,
-    opponent: str, ab_depth: int, ab_prune: bool,
+    opponent: str, ab_depth: int, ab_prune: bool, suppress_p2p_trade: bool,
 ):
     fns = [_make_env(base_seed + i, shaped, shaping_coef, gamma,
-                     opponent, ab_depth, ab_prune)
+                     opponent, ab_depth, ab_prune, suppress_p2p_trade)
            for i in range(num_envs)]
     if use_subproc and num_envs > 1:
         return SubprocVecEnv(fns)
@@ -105,6 +106,10 @@ def main() -> None:
     p.add_argument("--ab-prune", action="store_true",
                    help="Enable AlphaBeta action pruning (most-impactful robber + "
                         "1-tile initial settlements) for a faster, narrower search.")
+    p.add_argument("--no-trades", action="store_true",
+                   help="Suppress player-to-player trades for the learner AND the "
+                        "opponents (maritime bank/port trades stay) — the canonical "
+                        "thesis ablation. Train and eval must match.")
     p.add_argument("--shaped", action="store_true",
                    help="Use VPShapedEnv (models/env_shaped.py): VP-only potential "
                         "shaping on top of the sparse +1/-1/-2 terminal. gamma is "
@@ -131,6 +136,7 @@ def main() -> None:
         args.num_envs, args.seed, use_subproc=args.subproc,
         shaped=args.shaped, shaping_coef=args.shaping_coef, gamma=args.gamma,
         opponent=args.opponent, ab_depth=args.ab_depth, ab_prune=args.ab_prune,
+        suppress_p2p_trade=args.no_trades,
     )
 
     model = MaskablePPO(
@@ -166,6 +172,7 @@ def main() -> None:
         if args.opponent == "alphabeta" else "")
     print(f"[train] run={args.run_name} net_arch={net_arch} opponent={opp_desc} "
           f"num_envs={args.num_envs} total_steps={args.total_steps} lr={args.lr} "
+          f"trades={'off' if args.no_trades else 'on'} "
           f"shaped={args.shaped} coef={args.shaping_coef if args.shaped else None}")
 
     ckpt_cb = CheckpointCallback(

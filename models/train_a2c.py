@@ -74,6 +74,9 @@ def main() -> None:
     p.add_argument("--max-grad-norm", type=float, default=0.5)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--save-dir", type=str, default=str(CKPT_DIR / "a2c"))
+    p.add_argument("--no-trades", action="store_true",
+                   help="Suppress player-to-player trades (learner AND opponents; "
+                        "maritime stays) — the canonical thesis ablation.")
     args = p.parse_args()
 
     save_dir = Path(args.save_dir)
@@ -82,7 +85,10 @@ def main() -> None:
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    envs = [FastCatanEnv(seed=args.seed + i) for i in range(args.num_envs)]
+    envs = [FastCatanEnv(seed=args.seed + i, suppress_p2p_trade=args.no_trades)
+            for i in range(args.num_envs)]
+    print(f"[train] a2c num_envs={args.num_envs} total_steps={args.total_steps} "
+          f"lr={args.lr} trades={'off' if args.no_trades else 'on'}")
     obs = np.stack([e.reset()[0] for e in envs])
     masks = np.stack([e.action_masks() for e in envs])
 

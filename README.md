@@ -193,6 +193,24 @@ historically the M2/M3 track. Note the campaign finding below: reactive
 policies cap out near 0 vs Alpha-Beta regardless of steps/capacity; the live
 track is the search stack in `models/alphazero/`.
 
+#### Baseline benchmark vs random (50M steps, no trades)
+
+Equal-budget comparison of the three reactive algorithms: each trained **50M
+steps vs random** with **no player-to-player trades** (maritime on), identical
+env / sparse reward / `256×256` net / `seed 42`, then **1000-game eval vs
+random** (Wilson 95% CI). Reproduce: `bash scripts/run_baseline_benchmark.sh`;
+results land in `models/benchmarks/baselines_vs_random/` (`summary.md` + JSONs).
+
+| Algo | Win% vs random (1000g) | 95% CI | M2 gate (>90%) | Train time |
+|------|------------------------|--------|----------------|-----------|
+| PPO (MaskablePPO, GPU) | **95.3** | [93.8, 96.4] | ✅ PASS | 46 min |
+| A2C (custom, CPU) | 87.4 | [85.2, 89.3] | ❌ FAIL | 50 min |
+| DQN (custom, multi-env GPU) | 71.8 | [68.9, 74.5] | ❌ FAIL | 1.3 h |
+
+Textbook ordering PPO > A2C > DQN. Eval action selection: PPO/A2C sample, DQN
+argmax (algo-inherent — DQN has no stochastic policy). DQN uses the multi-env +
+GPU rewrite (`--num-envs`); single-env DQN would need ~40 h for 50M steps.
+
 ## The Alpha-Beta campaign
 
 The thesis question — *can a learned agent beat Alpha-Beta?* — was answered

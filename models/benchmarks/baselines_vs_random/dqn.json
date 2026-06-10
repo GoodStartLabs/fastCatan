@@ -1,0 +1,41 @@
+{
+  "algo": "dqn",
+  "tag": "50000000 steps vs random, no-trades",
+  "ckpt": "models/checkpoints/baseline_dqn_nt/dqn_final.pt",
+  "opponent": "random",
+  "trades": "off",
+  "no_trades": true,
+  "deterministic": false,
+  "games_requested": 1000,
+  "games_scored": 1000,
+  "no_winner": 0,
+  "wins": 718,
+  "win_rate": 0.718,
+  "ci95_low": 0.6893170177459294,
+  "ci95_high": 0.7450144544704043,
+  "m2_gate_pass": false,
+  "seat_wins": [
+    718,
+    112,
+    87,
+    83
+  ],
+  "eval_seed": 12345,
+  "max_steps": 5000,
+  "sims": null,
+  "timestamp": "2026-06-10T18:10:37+00:00",
+  "env": {
+    "python": "3.12.4",
+    "numpy": "2.1.3",
+    "git_sha": "c67c167",
+    "torch": "2.5.1+cu124",
+    "obs_size": 1084,
+    "num_actions": 286
+  },
+  "train": {
+    "total_steps": 50000000,
+    "train_seconds": 4728.0,
+    "net_arch": "256,256",
+    "num_envs": 16
+  }
+}
