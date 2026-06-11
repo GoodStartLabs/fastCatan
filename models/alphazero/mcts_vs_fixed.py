@@ -59,6 +59,7 @@ class MCTSvsFixed:
         learner_seat: int = LEARNER,
         catanatron_chance: bool = False,
         opp_model: str = "alphabeta",
+        judge: torch.nn.Module | None = None,
     ):
         self.net = net
         self.device = device
@@ -123,8 +124,31 @@ class MCTSvsFixed:
 
         self.env = fastcatan.Env()
         self._mask_buf = np.zeros(MASK_WORDS, dtype=np.uint64)
-        self._obs = np.zeros(OBS_SIZE, dtype=np.float32)
-        self._opp_obs = np.zeros(OBS_SIZE, dtype=np.float32)
+        # The PRIOR/OPP net may itself be full-obs (e.g. the XL single-net
+        # config): size its buffers to the net's input width.
+        net_dim = next(net.parameters()).shape[1]
+        if net_dim not in (OBS_SIZE, fastcatan.OBS_FULL_SIZE):
+            raise ValueError(f"net input dim {net_dim} unsupported")
+        self._net_full = net_dim == fastcatan.OBS_FULL_SIZE
+        self._obs = np.zeros(net_dim, dtype=np.float32)
+        self._opp_obs = np.zeros(net_dim, dtype=np.float32)
+        # JUDGE: a separate net that owns the leaf VALUE and the value-head
+        # trade responses; `net` keeps the prior and the in-tree opponent
+        # policy. Width-aware: a 1132 judge gets write_obs_full (POV prefix +
+        # hidden-enemy appendix — the same information ab_value reads at
+        # leaves), a 1084 judge gets plain POV obs (control configs).
+        # Self-contained either way: no ab_value/ab_decide.
+        self.judge = judge
+        self._judge_full = False
+        if judge is not None:
+            jdim = next(judge.parameters()).shape[1]
+            if jdim == fastcatan.OBS_FULL_SIZE:
+                self._judge_full = True
+            elif jdim != OBS_SIZE:
+                raise ValueError(f"judge input dim {jdim} is neither "
+                                 f"OBS_SIZE nor OBS_FULL_SIZE")
+        self._full_obs = np.zeros(fastcatan.OBS_FULL_SIZE, dtype=np.float32)
+        self._pov_obs = np.zeros(OBS_SIZE, dtype=np.float32)
         self.last_root_value = 0.0   # backed-up V(root) from the last choose()
 
     @torch.no_grad()
@@ -146,7 +170,10 @@ class MCTSvsFixed:
             return int(legal[0])
         if all(self._trade_bool[a] for a in legal):
             return self._value_response(game_env, cp, legal)
-        game_env.write_obs(cp, self._opp_obs)
+        if self._net_full:
+            game_env.write_obs_full(cp, self._opp_obs)
+        else:
+            game_env.write_obs(cp, self._opp_obs)
         obs = torch.from_numpy(self._opp_obs).unsqueeze(0).to(self.device)
         logits, _v = self.net(obs)
         row = logits[0].float().cpu().numpy()
@@ -158,14 +185,23 @@ class MCTSvsFixed:
         """Value-head argmax over an all-trade prompt (one batched forward).
         A CONFIRM probe executes the swap, so the proposer side genuinely
         prices the trade; ACCEPT/DECLINE probes tie pre-swap and fall to the
-        lowest id, with the real pricing done at the learner's CONFIRM node."""
+        lowest id, with the real pricing done at the learner's CONFIRM node.
+        With a judge set, the probes are priced on full obs by the judge —
+        same evaluator as the leaves."""
+        vnet = self.judge if self.judge is not None else self.net
+        judge_full = (self._judge_full if self.judge is not None
+                      else self._net_full)
+        obs_w = fastcatan.OBS_FULL_SIZE if judge_full else OBS_SIZE
         snap = game_env.snapshot()
-        rows = np.empty((len(legal), OBS_SIZE), dtype=np.float32)
+        rows = np.empty((len(legal), obs_w), dtype=np.float32)
         for i, a in enumerate(legal):
             game_env.step(a)
-            game_env.write_obs(cp, rows[i])
+            if judge_full:
+                game_env.write_obs_full(cp, rows[i])
+            else:
+                game_env.write_obs(cp, rows[i])
             game_env.load_snapshot(snap)
-        _logits, v = self.net(torch.from_numpy(rows).to(self.device))
+        _logits, v = vnet(torch.from_numpy(rows).to(self.device))
         return int(legal[int(np.argmax(v.float().cpu().numpy()))])
 
     # -------- env reads --------
@@ -255,7 +291,10 @@ class MCTSvsFixed:
         value can't resolve AB-scale 1-3%-win-prob move differences; the
         hand value can, with zero variance). Normalized as a margin over the
         best opponent seat squashed by tanh(./ab_value_scale)."""
-        self.env.write_obs(self.learner, self._obs)
+        if self._net_full:
+            self.env.write_obs_full(self.learner, self._obs)
+        else:
+            self.env.write_obs(self.learner, self._obs)
         obs = torch.from_numpy(self._obs).unsqueeze(0).to(self.device)
         logits, value = self.net(obs)
         row = logits[0].float().cpu().numpy()
@@ -292,6 +331,16 @@ class MCTSvsFixed:
             fine_part = margin - vp_part * VP_W
             return float(0.75 * np.tanh(vp_part / 3.0)
                          + 0.25 * np.tanh(fine_part / self.ab_value_scale))
+        if self.judge is not None:
+            if self._judge_full:
+                self.env.write_obs_full(self.learner, self._full_obs)
+                jin = self._full_obs
+            else:
+                self.env.write_obs(self.learner, self._pov_obs)
+                jin = self._pov_obs
+            _lg, jv = self.judge(torch.from_numpy(jin)
+                                 .unsqueeze(0).to(self.device))
+            return float(jv.item())
         return float(value.item())
 
     # -------- selection --------

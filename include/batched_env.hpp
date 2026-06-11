@@ -94,6 +94,12 @@ namespace catan {
     // within each env. One pass for max^n leaf evaluation.
     void batched_env_write_obs_all4(const BatchedEnv& env, float* out) noexcept;
 
+    // OBS_FULL_SIZE variants (POV prefix + hidden-enemy appendix) for the
+    // learned judge. `out` rows are OBS_FULL_SIZE wide.
+    void batched_env_write_obs_full_pov(const BatchedEnv& env, const uint8_t* povs,
+                                        float* out) noexcept;
+    void batched_env_write_obs_full_all4(const BatchedEnv& env, float* out) noexcept;
+
     // Decision/chance signature per env -> `out` is (n, SIG_INTS) int32.
     // Row layout documented at SIG_INTS. Distinguishes chance outcomes the
     // same way the Python MCTS _signature does (dice totals, robber steals

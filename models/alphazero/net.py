@@ -115,7 +115,8 @@ def load_policy_value_net(ckpt_state: dict, device: str = "cpu") -> PolicyValueN
     sd = ckpt_state["net_state"]
     hidden = infer_hidden(sd)
     v0 = sd["value_head.0.weight"]          # (value_hidden, trunk_d [+ obs])
-    net = PolicyValueNet(hidden=hidden,
+    net = PolicyValueNet(obs_dim=sd["trunk.0.weight"].shape[1],
+                         hidden=hidden,
                          value_channels=sd["value_head.2.weight"].shape[0],
                          value_hidden=v0.shape[0],
                          value_skip_obs=v0.shape[1] != hidden[-1],

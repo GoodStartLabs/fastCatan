@@ -108,6 +108,12 @@ struct PyEnv {
             throw std::runtime_error("obs buffer length mismatch");
         ::catan::write_obs(s, b, pov, out.data());
     }
+
+    void write_obs_full(uint8_t pov, nb::ndarray<float, nb::ndim<1>, nb::c_contig, nb::device::cpu> out) const {
+        if (out.shape(0) != OBS_FULL_SIZE)
+            throw std::runtime_error("obs buffer length mismatch");
+        ::catan::write_obs_full(s, b, pov, out.data());
+    }
 };
 
 }  // namespace
@@ -139,6 +145,7 @@ Determinism: same seed -> same trajectory. Perft hashes pinned.
 
     // --- Sizes / constants ---
     m.attr("OBS_SIZE")    = OBS_SIZE;       // float32 features per env
+    m.attr("OBS_FULL_SIZE") = OBS_FULL_SIZE;  // OBS_SIZE + hidden-enemy appendix
     m.attr("MASK_WORDS")  = MASK_WORDS;     // uint64 words in legal-action mask
     m.attr("NUM_ACTIONS") = NUM_ACTIONS;    // total flat action IDs
     m.attr("NUM_PLAYERS") = uint32_t(4);
@@ -262,6 +269,12 @@ Determinism: same seed -> same trajectory. Perft hashes pinned.
              nb::arg("pov"), nb::arg("out"),
              "Write obs from ``pov`` (player 0..3) into the provided "
              "float32 buffer of length OBS_SIZE.")
+        .def("write_obs_full", &PyEnv::write_obs_full,
+             nb::arg("pov"), nb::arg("out"),
+             "OBS_FULL_SIZE variant: byte-identical OBS_SIZE prefix plus the "
+             "hidden-enemy appendix (exact resources, dev cards by type, "
+             "pending dev buys, hidden dev VP per opponent). For the learned "
+             "judge — the same information ab_value reads at leaves.")
         // --- Native expectimax alpha-beta (faithful Catanatron port) ---
         .def("ab_decide",
              [](const PyEnv& e, uint8_t pov, int depth, bool prune) {
@@ -557,6 +570,29 @@ counter. GIL released.)")
              nb::arg("out"),
              "Fill (num_envs, 4, OBS_SIZE) float32 with every env's obs from "
              "all 4 seat POVs — one pass for max^n MCTS leaf evaluation.")
+        .def("write_obs_full_pov_batch",
+             [](PyBatchedEnv& e, ArrU8 povs, ArrF32_2D out) {
+                 if (povs.shape(0) != e.inner.n)
+                     throw std::runtime_error("povs length mismatch");
+                 if (out.shape(0) != e.inner.n || out.shape(1) != OBS_FULL_SIZE)
+                     throw std::runtime_error("obs buffer shape mismatch");
+                 nb::gil_scoped_release release;
+                 batched_env_write_obs_full_pov(e.inner, povs.data(), out.data());
+             },
+             nb::arg("povs"), nb::arg("out"),
+             "write_obs_pov_batch with OBS_FULL_SIZE rows (POV prefix + "
+             "hidden-enemy appendix) — judge leaf eval.")
+        .def("write_obs_full_all4",
+             [](PyBatchedEnv& e, ArrF32_3D out) {
+                 if (out.shape(0) != e.inner.n || out.shape(1) != 4
+                     || out.shape(2) != OBS_FULL_SIZE)
+                     throw std::runtime_error("obs buffer shape mismatch");
+                 nb::gil_scoped_release release;
+                 batched_env_write_obs_full_all4(e.inner, out.data());
+             },
+             nb::arg("out"),
+             "write_obs_all4 with OBS_FULL_SIZE rows — judge leaf eval for "
+             "max^n search.")
         .def("ab_decide_batch",
              [](PyBatchedEnv& e, int depth, bool prune,
                 ArrU64 banned_mask, ArrU32 out) {

@@ -184,4 +184,24 @@ void write_obs(const GameState& s, const BoardLayout& b,
     assert(w.p == out + OBS_SIZE);
 }
 
+void write_obs_full(const GameState& s, const BoardLayout& b,
+                    uint8_t self, float* out) noexcept {
+    write_obs(s, b, self, out);
+    Writer w{out + OBS_SIZE};
+    // Hidden enemy state, per opponent in relseat order (+1, +2, +3):
+    // exact resources, dev cards held by type, dev bought this turn, and the
+    // VP hidden in unplayed dev cards (vp - vp_without_dev).
+    for (uint8_t rel = 1; rel < NUM_PLAYERS; ++rel) {
+        uint8_t pl = uint8_t((self + rel) & 0x3);
+        for (uint8_t r = 0; r < NUM_RESOURCES; ++r)
+            w.put(float(s.player_resources[pl][r]) / norm::RES);
+        for (uint8_t d = 0; d < 5; ++d)
+            w.put(float(s.player_dev[pl][d]) / norm::DEV);
+        for (uint8_t d = 0; d < 5; ++d)
+            w.put(float(s.player_dev_bought_this_turn[pl][d]) / norm::DEV);
+        w.put(float(s.player_vp[pl] - s.player_vp_without_dev[pl]) / norm::VP);
+    }
+    assert(w.p == out + OBS_FULL_SIZE);
+}
+
 }  // namespace catan

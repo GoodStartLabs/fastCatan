@@ -136,7 +136,8 @@ DEFAULT_MCTS_CKPT = "models/checkpoints/il_ab_d2_160k_vpm/il_final.pt"
 FAIR_SHARE = 0.25  # per-seat chance baseline (1 of 4 seats)
 
 
-def build_players(ab_colors, args, policy, mcts_net, game_seed: int):
+def build_players(ab_colors, args, policy, mcts_net, game_seed: int,
+                  judge_net=None):
     """AlphaBeta at every color in `ab_colors`; the other seats are trained
     bridges. PPO seats share `policy`; MCTS seats each get their own
     state-aware policy instance (TRUE seat is re-synced live every decision).
@@ -161,7 +162,8 @@ def build_players(ab_colors, args, policy, mcts_net, game_seed: int):
                 opp_model=args.model_opp,
                 enable_trades=enable_trades,
                 trade_add_cap=args.trade_add_cap,
-                seed=game_seed * 4 + i)
+                seed=game_seed * 4 + i,
+                judge=judge_net)
             mcts_policies.append(game_policy)
         else:
             game_policy = policy
@@ -243,6 +245,11 @@ def main() -> None:
     p.add_argument("--model-catanatron-chance", action="store_true",
                    help="in-tree model uses Catanatron's chance blur + "
                         "first-enemy robber pruner (see AB/model_divergence).")
+    p.add_argument("--judge-ckpt", type=str, default="",
+                   help="FULL-OBS JUDGE checkpoint: owns the leaf value + "
+                        "trade pricing inside each MCTS seat (self-contained "
+                        "replacement for ab_value's information set). --ckpt "
+                        "keeps the prior + in-tree opponent.")
     p.add_argument("--model-opp", choices=["alphabeta", "net"],
                    default="alphabeta",
                    help="IN-TREE opponent model: 'net' = the clone's own "
@@ -292,12 +299,16 @@ def main() -> None:
 
     n = args.n_agents
     k = 4 - n
-    policy = mcts_net = None
+    policy = mcts_net = judge_net = None
     if args.policy == "mcts":
         import torch
         from models.alphazero.net import load_policy_value_net
         state = torch.load(str(ckpt), map_location="cpu", weights_only=False)
         mcts_net = load_policy_value_net(state, "cpu")
+        if args.judge_ckpt:
+            jstate = torch.load(args.judge_ckpt, map_location="cpu",
+                                weights_only=False)
+            judge_net = load_policy_value_net(jstate, "cpu")
     else:
         policy = build_policy(args.algo, ckpt,
                               deterministic=args.deterministic)
@@ -324,7 +335,8 @@ def main() -> None:
         for c in ab_colors:
             ab_seat_games[c] += 1
         players, game_mcts = build_players(ab_colors, args, policy,
-                                           mcts_net, game_seed)
+                                           mcts_net, game_seed,
+                                           judge_net=judge_net)
         game = Game(players, seed=game_seed)
         winner = game.play()
 
@@ -382,6 +394,7 @@ def main() -> None:
         "model_catanatron_chance": (args.model_catanatron_chance
                                     if args.policy == "mcts" else None),
         "model_opp": args.model_opp if args.policy == "mcts" else None,
+        "judge_ckpt": (args.judge_ckpt or None) if args.policy == "mcts" else None,
         "trade_add_cap": (args.trade_add_cap
                           if args.policy == "mcts" else None),
         "mcts_fallbacks": mcts_fallbacks if args.policy == "mcts" else None,

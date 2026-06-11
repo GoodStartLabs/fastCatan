@@ -119,6 +119,12 @@ def main() -> None:
                         "argmax (stage-2 de-cat; with --leaf-eval net the "
                         "search is fully self-contained). The TABLE opponent "
                         "stays --opponent.")
+    p.add_argument("--judge-ckpt", type=str, default="",
+                   help="FULL-OBS JUDGE checkpoint (OBS_FULL_SIZE input): owns "
+                        "the leaf VALUE + value-head trade pricing, while "
+                        "--ckpt keeps the prior and the in-tree opponent. "
+                        "Self-contained (no ab_value), but with the same "
+                        "hidden-enemy information ab_value reads.")
     args = p.parse_args()
 
     ckpt = Path(args.ckpt)
@@ -127,6 +133,20 @@ def main() -> None:
     verify_stamp(ckpt, strict=False)
     state = torch.load(str(ckpt), map_location=args.device, weights_only=False)
     net = load_policy_value_net(state, args.device)
+
+    judge = None
+    if args.judge_ckpt:
+        paths = [x for x in args.judge_ckpt.split(",") if x]
+        nets = [load_policy_value_net(
+                    torch.load(p, map_location=args.device,
+                               weights_only=False), args.device)
+                for p in paths]
+        if len(nets) == 1:
+            judge = nets[0]
+        else:
+            from models.alphazero.ensemble_judge import JudgeEnsemble
+            judge = JudgeEnsemble(nets).to(args.device)
+            judge.eval()
 
     suppress = not args.allow_trades
     p2p_bool = p2p_trade_mask() if suppress else None
@@ -138,7 +158,7 @@ def main() -> None:
                            ab_depth=args.ab_depth, ab_prune=args.ab_prune,
                            leaf_eval=args.leaf_eval,
                            ab_value_scale=args.ab_value_scale,
-                           opp_model=args.model_opp)
+                           opp_model=args.model_opp, judge=judge)
     else:
         mcts = MCTS(net, device=args.device, sims=args.sims, c_puct=args.c_puct,
                     dirichlet_frac=0.0, seed=args.seed, suppress_p2p=suppress)
@@ -173,6 +193,8 @@ def main() -> None:
                 if args.opponent == "alphabeta" else "random")
     print(f"\n=== AlphaZero vs {opp_desc} ===")
     print(f"ckpt: {ckpt}  sims: {args.sims}")
+    if args.judge_ckpt:
+        print(f"judge: {args.judge_ckpt} (full-obs leaf value)")
     print(f"games (winnered): {n}/{args.games} (no-winner: {no_winner})")
     print(f"win rate: {rate:.4f}  95% CI [{lo:.4f}, {hi:.4f}]")
     print(f"seat distribution: {seat_wins}")

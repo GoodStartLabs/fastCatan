@@ -115,7 +115,10 @@ def _play_games_worker(payload: dict) -> dict:
 
     env = fc.Env()
     mask_buf = np.zeros(fc.MASK_WORDS, dtype=np.uint64)
-    obs_buf = np.zeros(fc.OBS_SIZE, dtype=np.float32)
+    full_obs = bool(payload.get("full_obs"))
+    obs_w = fc.OBS_FULL_SIZE if full_obs else fc.OBS_SIZE
+    obs_buf = np.zeros(obs_w, dtype=np.float32)
+    write_obs = env.write_obs_full if full_obs else env.write_obs
 
     abv_scale = payload.get("abv_scale", 86e6)
     obs_l, act_l, mask_l, z_l, vps_l, seat_l = [], [], [], [], [], []
@@ -156,7 +159,7 @@ def _play_games_worker(payload: dict) -> dict:
                 teacher_a = rng.choice(legal)  # safety net; ~never (counted)
                 fallbacks += 1
 
-            env.write_obs(cp, obs_buf)
+            write_obs(cp, obs_buf)
             obs_l.append(obs_buf.astype(np.float16))
             act_l.append(np.uint16(teacher_a))
             mask_l.append(np.packbits(mask))
@@ -171,7 +174,8 @@ def _play_games_worker(payload: dict) -> dict:
             else:                              # student acts, teacher labels
                 torch_mod, net = student
                 with torch_mod.no_grad():
-                    logits, _v = net(torch_mod.from_numpy(obs_buf).unsqueeze(0))
+                    logits, _v = net(torch_mod.from_numpy(
+                        obs_buf[:fc.OBS_SIZE]).unsqueeze(0))
                 row = logits[0].numpy()
                 row[~mask] = -np.inf
                 play_a = int(row.argmax())
@@ -190,7 +194,7 @@ def _play_games_worker(payload: dict) -> dict:
     shard = Path(payload["out_dir"]) / f"shard_{payload['shard_id']:05d}.npz"
     np.savez_compressed(
         shard,
-        obs=np.stack(obs_l) if obs_l else np.zeros((0, 1084), np.float16),
+        obs=np.stack(obs_l) if obs_l else np.zeros((0, obs_w), np.float16),
         act=np.asarray(act_l, dtype=np.uint16),
         mask=np.stack(mask_l) if mask_l else np.zeros((0, MASK_BYTES), np.uint8),
         z=np.asarray(z_l, dtype=np.float16),
@@ -226,6 +230,10 @@ def main() -> None:
                    help="fine-part tanh scale for the recorded abv label; "
                         "MUST match the --ab-value-scale the search will use "
                         "(gate config: 86e6).")
+    p.add_argument("--full-obs", action="store_true",
+                   help="record OBS_FULL_SIZE obs (POV prefix + hidden-enemy "
+                        "appendix) — training data for the full-state judge. "
+                        "POV consumers can slice the [:OBS_SIZE] prefix.")
     p.add_argument("--seed", type=int, default=20260605)
     p.add_argument("--nice", type=int, default=10,
                    help="os.nice for workers so GPU training keeps priority.")
@@ -243,6 +251,7 @@ def main() -> None:
         "student_ckpt": args.student_ckpt or None,
         "chance_mode": 1 if args.catanatron_chance else 0,
         "abv_scale": args.abv_scale,
+        "full_obs": args.full_obs,
         "seed": args.seed * 1_000_003 + i * 7919, "nice": args.nice,
     } for i in range(n_shards)]
 

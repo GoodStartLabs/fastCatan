@@ -194,6 +194,26 @@ void batched_env_write_obs_all4(const BatchedEnv& env, float* out) noexcept {
                       out + (std::size_t(i) * 4 + pov) * OBS_SIZE);
 }
 
+void batched_env_write_obs_full_pov(const BatchedEnv& env, const uint8_t* povs,
+                                    float* out) noexcept {
+#if FCATAN_HAVE_OPENMP
+    #pragma omp parallel for schedule(static)
+#endif
+    for (int32_t i = 0; i < int32_t(env.n); ++i)
+        write_obs_full(env.states[i], env.layouts[i], povs[i],
+                       out + std::size_t(i) * OBS_FULL_SIZE);
+}
+
+void batched_env_write_obs_full_all4(const BatchedEnv& env, float* out) noexcept {
+#if FCATAN_HAVE_OPENMP
+    #pragma omp parallel for schedule(static)
+#endif
+    for (int32_t i = 0; i < int32_t(env.n); ++i)
+        for (uint8_t pov = 0; pov < 4; ++pov)
+            write_obs_full(env.states[i], env.layouts[i], pov,
+                           out + (std::size_t(i) * 4 + pov) * OBS_FULL_SIZE);
+}
+
 void batched_env_ab_decide(const BatchedEnv& env, int depth, bool prune,
                            const uint64_t* banned, uint32_t* out,
                            int chance_mode) noexcept {

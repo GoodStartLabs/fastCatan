@@ -1,0 +1,86 @@
+{
+  "experiment": "1xMCTS_vs_3xAlphaBeta",
+  "timestamp": "2026-06-11T00:29:40",
+  "ckpt": "models/checkpoints/il_ab_d2_160k_vpm/il_final.pt",
+  "policy": "mcts",
+  "algo": null,
+  "n_agents": 1,
+  "n_ab": 3,
+  "mcts_sims": 8,
+  "leaf_eval": "net",
+  "ab_value_scale": 86000000.0,
+  "model_ab_depth": 1,
+  "model_ab_prune": false,
+  "model_catanatron_chance": false,
+  "model_opp": "net",
+  "judge_ckpt": "/tmp/judge_smoke.pt",
+  "trade_add_cap": 3,
+  "mcts_fallbacks": 0,
+  "mcts_decisions": 32,
+  "deterministic": false,
+  "enable_trades": false,
+  "max_offers_per_turn": 5,
+  "rotate_ab_seat": true,
+  "ab_depth": 2,
+  "ab_prune": true,
+  "seed": 7,
+  "pythonhashseed": "0",
+  "games": 1,
+  "decided": 1,
+  "no_winner": 0,
+  "ab_wins": 1,
+  "ab_win_rate": 1.0,
+  "ab_ci95": [
+    0.20654329147389294,
+    1.0
+  ],
+  "ab_fair_share": 0.75,
+  "agent_wins": 0,
+  "agent_win_rate": 0.0,
+  "agent_ci95": [
+    0.0,
+    0.7934567085261071
+  ],
+  "agent_per_seat_rate": 0.0,
+  "per_seat_fair_share": 0.25,
+  "seat_wins": {
+    "RED": 1,
+    "BLUE": 0,
+    "ORANGE": 0,
+    "WHITE": 0
+  },
+  "ab_seat_wins": {
+    "RED": 1,
+    "BLUE": 0,
+    "ORANGE": 0,
+    "WHITE": 0
+  },
+  "ab_seat_games": {
+    "RED": 1,
+    "BLUE": 1,
+    "ORANGE": 1,
+    "WHITE": 0
+  },
+  "trades_total": {
+    "offers": 0,
+    "confirms": 0,
+    "accepts": 0,
+    "rejects": 0,
+    "cancels": 0,
+    "maritime": 26,
+    "ab_accepts": 0,
+    "maritime_ab": 20
+  },
+  "trades_per_game": {
+    "offers": 0.0,
+    "confirms": 0.0,
+    "accepts": 0.0,
+    "rejects": 0.0,
+    "cancels": 0.0,
+    "maritime": 26.0,
+    "ab_accepts": 0.0,
+    "maritime_ab": 20.0
+  },
+  "elapsed_s": 2.2975609909990453,
+  "s_per_game": 2.2975609909990453
+}

@@ -78,16 +78,24 @@ def build_cache(data_dirs: list[Path]) -> dict:
         raise FileNotFoundError(f"no shards under {data_dirs}")
     counts = []
     has_abv = has_abm = has_rootv = True
+    obs_w = None
     for s in shards:
         with np.load(s) as d:
             counts.append(d["act"].shape[0])
             has_abv = has_abv and ("abv" in d.files)
             has_abm = has_abm and ("abm" in d.files)
             has_rootv = has_rootv and ("rootv" in d.files)
+            w = d["obs"].shape[1]
+            if obs_w is None:
+                obs_w = w
+            elif obs_w != w:
+                raise ValueError(f"obs width mismatch across shards: {obs_w} "
+                                 f"vs {w} in {s} — don't mix POV and full-obs "
+                                 f"datasets in one cache")
     n = int(sum(counts))
     cache.mkdir(exist_ok=True)
     obs = np.lib.format.open_memmap(cache / "obs.npy", mode="w+",
-                                    dtype=np.float16, shape=(n, OBS_SIZE))
+                                    dtype=np.float16, shape=(n, obs_w))
     act = np.lib.format.open_memmap(cache / "act.npy", mode="w+",
                                     dtype=np.uint16, shape=(n,))
     mask = np.lib.format.open_memmap(cache / "mask.npy", mode="w+",
@@ -137,8 +145,12 @@ def build_cache(data_dirs: list[Path]) -> dict:
     return build_cache(data_dirs)
 
 
-def _batch(data, idx, device, value_target="sparse", abv_scale=86e6):
-    obs = torch.from_numpy(np.asarray(data["obs"][idx], dtype=np.float32)).to(device)
+def _batch(data, idx, device, value_target="sparse", abv_scale=86e6,
+           obs_width=0):
+    obs_np = np.asarray(data["obs"][idx], dtype=np.float32)
+    if obs_width:
+        obs_np = obs_np[:, :obs_width]      # POV-control on full-obs shards
+    obs = torch.from_numpy(obs_np).to(device)
     act = torch.from_numpy(np.asarray(data["act"][idx], dtype=np.int64)).to(device)
     mask_bits = np.unpackbits(np.asarray(data["mask"][idx]), axis=1)[:, :NUM_ACTIONS]
     mask = torch.from_numpy(mask_bits.astype(bool)).to(device)
@@ -243,6 +255,9 @@ def main() -> None:
                         "7.8k smp/s = 46x slower); block mode streams one "
                         "contiguous block into RAM, shuffles within, and "
                         "permutes block order per epoch.")
+    p.add_argument("--obs-width", type=int, default=0,
+                   help="slice obs columns to this width (e.g. 1084 = train "
+                        "a POV control on full-obs shards). 0 = native width.")
     p.add_argument("--value-hidden", type=int, default=128,
                    help="value-head hidden width (128 was the underfit "
                         "bottleneck for the two-scale fine channel).")
@@ -277,7 +292,9 @@ def main() -> None:
     hidden = tuple(int(x) for x in args.hidden.split(",") if x)
     n_channels = {"ab_two_scale": 2, "ab_mixed": 3}.get(args.value_target, 1)
     multi_v = n_channels > 1
-    net = PolicyValueNet(hidden=hidden,
+    obs_dim = int(args.obs_width or data["obs"].shape[1])  # 1084 POV / 1132 full
+    net = PolicyValueNet(obs_dim=obs_dim,
+                         hidden=hidden,
                          value_channels=n_channels,
                          value_hidden=args.value_hidden,
                          value_skip_obs=args.value_skip_obs).to(args.device)
@@ -305,7 +322,8 @@ def main() -> None:
             for s in range(0, n_val, args.batch_size):
                 idx = val_idx[s:s + args.batch_size]
                 obs, act, mask, z = _batch(data, idx, args.device,
-                                           args.value_target, args.abv_scale)
+                                           args.value_target, args.abv_scale,
+                                           args.obs_width)
                 logits, value = (net.forward_channels(obs) if multi_v
                                  else net(obs))
                 logits = logits.masked_fill(~mask, float("-inf"))
@@ -352,7 +370,8 @@ def main() -> None:
     for ep in range(1, args.epochs + 1):
         for src, idx in batch_iter(args.seed * 1000 + ep):
             obs, act, mask, z = _batch(src, idx, args.device,
-                                       args.value_target, args.abv_scale)
+                                       args.value_target, args.abv_scale,
+                                       args.obs_width)
             logits, value = (net.forward_channels(obs) if multi_v
                              else net(obs))
             logits = logits.masked_fill(~mask, float("-inf"))

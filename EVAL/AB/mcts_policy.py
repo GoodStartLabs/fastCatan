@@ -57,6 +57,7 @@ class MctsStatePolicy:
         enable_trades: bool = False,
         trade_prior_frac: float = 0.05,
         trade_add_cap: int = 3,
+        judge: torch.nn.Module | None = None,
     ):
         self.bridge = None              # wired after bridge construction
         self.seat = seat
@@ -75,7 +76,8 @@ class MctsStatePolicy:
             ab_depth=model_ab_depth, ab_prune=model_ab_prune,
             catanatron_chance=model_catanatron_chance,
             leaf_eval=leaf_eval, opp_model=opp_model,
-            ab_value_scale=ab_value_scale, learner_seat=seat)
+            ab_value_scale=ab_value_scale, learner_seat=seat,
+            judge=judge)
         self._mask_buf = np.zeros(MASK_WORDS, dtype=np.uint64)
         self.fallbacks = 0
         self.decisions = 0

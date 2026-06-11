@@ -37,6 +37,14 @@ namespace catan {
     inline constexpr uint32_t OBS_SIZE =
         4 * OBS_PER_PLAYER + OBS_SELF_PRIVATE + OBS_BOARD + OBS_GAME + OBS_TRADE;
 
+    // Full-state appendix: the hidden enemy state the POV obs masks out.
+    // Per opponent (relseat +1, +2, +3), 16 floats:
+    // [resources(5), dev_playable(5), dev_bought_pending(5), hidden_dev_vp(1)]
+    // Consumers: the learned JUDGE (leaf value) only — the same information
+    // ab_value reads at leaves. POV policy nets keep the OBS_SIZE prefix.
+    inline constexpr uint32_t OBS_FULL_APPENDIX = 3 * 16;
+    inline constexpr uint32_t OBS_FULL_SIZE = OBS_SIZE + OBS_FULL_APPENDIX;
+
     // Encode the env state into a flat float tensor from `player_pov`'s
     // perspective. Count fields are normalized by structural Catan maxima
     // (see namespace norm in obs.cpp; mirrored in bridge/obs_encoder.py);
@@ -44,5 +52,10 @@ namespace catan {
     // changes here require RL agents to retrain.
     void write_obs(const GameState& s, const BoardLayout& b,
                    uint8_t player_pov, float* out) noexcept;
+
+    // OBS_FULL_SIZE variant: byte-identical OBS_SIZE prefix (write_obs), then
+    // the full-state appendix. Same normalization constants as the prefix.
+    void write_obs_full(const GameState& s, const BoardLayout& b,
+                        uint8_t player_pov, float* out) noexcept;
 
 }  // namespace catan
