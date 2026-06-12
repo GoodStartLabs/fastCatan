@@ -30,6 +30,15 @@ REPO=${REPO:-${SLURM_SUBMIT_DIR:-$PWD}}
 cd "$REPO" || { echo "[FATAL] cannot cd to REPO=$REPO"; exit 1; }
 echo "[env] host=$(hostname) REPO=$REPO"
 
+# Optional environment modules (clusters WITHOUT conda): pass e.g.
+#   MODULES="python/3.12 gcc/14"   (also needed at runtime for editable.rebuild)
+MODULES=${MODULES:-}
+if [[ -n "$MODULES" ]]; then
+  command -v module >/dev/null 2>&1 || source /etc/profile.d/modules.sh 2>/dev/null || true
+  module load $MODULES || { echo "[FATAL] module load '$MODULES' failed"; exit 1; }
+  echo "[env] modules: $MODULES"
+fi
+
 # Env activation, in order of preference: explicit VENV -> explicit CONDA_SH ->
 # auto-find a conda in the usual spots -> `conda` already on PATH. Fail loudly.
 if [[ -n "${VENV:-}" ]]; then
