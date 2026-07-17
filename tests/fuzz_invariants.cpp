@@ -21,13 +21,17 @@
 //   2. Deadlock — the board is built out AND the dev deck is exhausted, so the
 //      last 1-2 VP are unreachable for every player (no affordable/legal build
 //      remains; longest-road and largest-army are already assigned). Max VP
-//      across all players stays < 10 forever, so there is no winner (e.g. seed
-//      2446268: 10^8 steps, no player's VP ever exceeds 9). step_one has no
-//      "no-progress" terminal, so such a game never ends on its own; at the RL
-//      level this is handled by the episode step cap in models/env.py
-//      (MAX_EPISODE_STEPS), which truncates a no-winner game and scores it -1.
-// Capped games are counted and the longest is reported; they do NOT fail the
-// gate — only true invariant violations do.
+//      across all players stays < 10 (e.g. seed 231322 deadlocks at turn 2000).
+//      step_one now applies a MAX_TURNS length backstop (state.hpp; rules.cpp
+//      :1320): any no-winner game that reaches MAX_TURNS turns is set to ENDED
+//      (done==1) with no winner, which the RL layer maps to TIE_REWARD. Such a
+//      backstopped terminal is rule-correct truncation, NOT an invariant breach;
+//      it is counted separately ("games backstopped") and does not fail the
+//      gate. A done==1 no-winner terminal *below* MAX_TURNS would be a real bug.
+// Capped and backstopped games are counted separately; they do NOT fail the
+// gate — only true invariant violations do. (With MAX_TURNS < the step cap, a
+// deadlock now backstops rather than running to the cap, so `capped` is
+// typically 0 under the default configuration.)
 //
 // Mirrors tests/test_invariants.py (the readable spec) but runs the full
 // 10^7-game sweep that pure Python cannot: Python ~35 games/s/core (per-step
@@ -115,6 +119,7 @@ int main(int argc, char** argv) {
     std::atomic<uint64_t> total_steps{0};
     std::atomic<uint64_t> violations{0};   // true invariant breaches — the gate
     std::atomic<uint64_t> capped{0};       // exceeded step cap without terminating
+    std::atomic<uint64_t> backstopped{0};  // ENDED via MAX_TURNS length backstop (no winner)
     std::atomic<bool>     have_violation{false};
 
     // First-violation + global-longest-game detail (guarded by critical).
@@ -177,7 +182,21 @@ int main(int argc, char** argv) {
             }
             uint8_t mx = 0;
             for (int p = 0; p < NUM_PLAYERS; ++p) mx = std::max(mx, s.player_vp[p]);
-            if (mx < WIN_VP) { record_violation(gseed, steps, "terminated without a winner (max VP < 10)"); continue; }
+            if (mx < WIN_VP) {
+                // done==1 with no winner is the ENGINE's documented MAX_TURNS
+                // length backstop (state.hpp: "end any no-winner game at
+                // MAX_TURNS"; rules.cpp:1320). This is rule-correct truncation of
+                // a deadlocked/heavy-tail game (board built out + dev deck
+                // exhausted so the last VP is unreachable for all seats), NOT an
+                // invariant breach — Python env maps it to TIE_REWARD. Only a
+                // done==1 terminal *below* MAX_TURNS is a genuine rule bug.
+                if (s.turn_count >= MAX_TURNS) {
+                    backstopped.fetch_add(1, std::memory_order_relaxed);
+                    continue;
+                }
+                record_violation(gseed, steps, "terminated without a winner (max VP < 10)");
+                continue;
+            }
 
             games_done.fetch_add(1, std::memory_order_relaxed);
         }
@@ -194,6 +213,7 @@ int main(int argc, char** argv) {
     const uint64_t nsteps = total_steps.load();
     const uint64_t ndone  = games_done.load();
     const uint64_t ncap   = capped.load();
+    const uint64_t nback  = backstopped.load();
 
     printf("=== fuzz_invariants (pure C++%s) ===\n",
 #ifdef _OPENMP
@@ -206,14 +226,17 @@ int main(int argc, char** argv) {
     printf("base seed:            %llu\n", (unsigned long long)base);
     printf("max steps/game:       %llu\n", (unsigned long long)maxstep);
     printf("games terminated:     %llu\n", (unsigned long long)ndone);
+    printf("games backstopped:    %llu   (ENDED at MAX_TURNS, no winner — rule-correct)\n",
+           (unsigned long long)nback);
     printf("games hit step cap:   %llu\n", (unsigned long long)ncap);
     printf("total steps:          %llu\n", (unsigned long long)nsteps);
     printf("elapsed:              %.3f s\n", elapsed);
     if (elapsed > 0) {
-        printf("games/sec:            %.0f\n", (ndone + ncap) / elapsed);
+        printf("games/sec:            %.0f\n", (ndone + nback + ncap) / elapsed);
         printf("steps/sec:            %.0f\n", nsteps / elapsed);
     }
-    if (ndone + ncap) printf("steps/game (avg):     %.1f\n", double(nsteps) / double(ndone + ncap));
+    if (ndone + nback + ncap)
+        printf("steps/game (avg):     %.1f\n", double(nsteps) / double(ndone + nback + ncap));
     printf("longest game:         %llu steps (seed %llu)\n",
            (unsigned long long)longest_steps, (unsigned long long)longest_seed);
     if (ncap) {
@@ -234,7 +257,8 @@ int main(int argc, char** argv) {
         return 1;
     }
     printf("resource-conservation OK; zero invariant violations over %llu games "
-           "(%llu terminated, %llu capped).\n",
-           (unsigned long long)(ndone + ncap), (unsigned long long)ndone, (unsigned long long)ncap);
+           "(%llu won, %llu backstopped, %llu capped).\n",
+           (unsigned long long)(ndone + nback + ncap), (unsigned long long)ndone,
+           (unsigned long long)nback, (unsigned long long)ncap);
     return 0;
 }

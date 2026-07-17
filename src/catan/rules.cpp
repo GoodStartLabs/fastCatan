@@ -1104,7 +1104,28 @@ inline void handle_trade_response(GameState& s, bool wanted_accept) noexcept {
             return;
         }
     }
-    // All responded — back to proposer for confirm/cancel.
+    // All responded. If nobody accepted, catanatron auto-cancels the offer and
+    // returns the proposer to their turn (apply_reject_trade: when the last
+    // responder rejects and sum(acceptees)==0 -> reset_trading_state +
+    // PLAY_TURN). Previously fastcatan left a fully-declined offer TRADE_PENDING
+    // and required an explicit proposer CANCEL, which diverged from the oracle
+    // on every all-decline ply (phase0-audit trade differential). Match the
+    // oracle: clear the scratch and hand the turn back to the proposer.
+    bool any_accept = false;
+    for (uint8_t p = 0; p < NUM_PLAYERS; ++p) {
+        if (p != s.trade_proposer && get_tr(s.trade_response, p) == TR_ACCEPT) {
+            any_accept = true;
+            break;
+        }
+    }
+    if (!any_accept) {
+        uint8_t proposer = s.trade_proposer;   // capture before clear nukes it
+        clear_trade_scratch(s);                // sets trade_proposer = NO_PLAYER
+        s.flag = Flag::NONE;
+        s.current_player = proposer;
+        return;
+    }
+    // At least one acceptee — back to proposer for confirm/cancel.
     s.current_player = s.trade_proposer;
 }
 
