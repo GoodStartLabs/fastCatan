@@ -128,6 +128,7 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=20260717)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--save-dir", default="models/checkpoints/p3_creat_x1")
+    ap.add_argument("--init", default="", help="warm-start from an il_belief .pt (plain mode only)")
     ap.add_argument("--run-name", default="p3x1")
     ap.add_argument("--wandb-mode", choices=["online", "offline", "disabled"], default="online")
     args = ap.parse_args()
@@ -170,6 +171,13 @@ def main() -> None:
             print(f"[wandb] disabled: {ex!r}", flush=True)
 
     net = BeliefActorCritic(actor_in).to(args.device)
+    if args.init:
+        st = torch.load(args.init, map_location=args.device, weights_only=False)
+        net.actor.load_state_dict(st["actor_body"])
+        net.actor_head.load_state_dict(st["actor_head"])
+        net.critic.load_state_dict(st["critic_body"])
+        net.critic_head.load_state_dict(st["critic_head"])
+        print(f"[init] warm-started from {args.init}", flush=True)
     n_params = sum(p.numel() for p in net.parameters())
     actor_params = sum(p.numel() for p in net.actor.parameters()) + sum(
         p.numel() for p in net.actor_head.parameters())
