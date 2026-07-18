@@ -41,14 +41,18 @@ perspective obs), and `EVAL/bridge/obs_encoder.py` (the catanatron→1084 mirror
 **Evaluator + promotion.** `models/eval.py` (`wilson_ci` — the single promotion
 statistic), `models/selfplay/eval_seats.py` (`play_one` per-seat driver),
 `models/selfplay/gate.py` (2v2 seat-rotation), `EVAL/AB/tournament.py` (the final
-catanatron bridge gate). Benchmark seeds + seat-rotation logic and the results
-schema are frozen with the ladder (`results/SCHEMA.md`, `LADDER_VERSION.md` — added
-in spec 0.3 §E / 1.0).
+catanatron bridge gate). The results schema `results/schema.py` + `results/SCHEMA.md`
+(v0 contract). Benchmark seeds + seat-rotation logic and the frozen roster live in
+`LADDER_VERSION.md` (added by spec 1.0). Generated result stores
+(`results/ladder.parquet`, `results/ladder.md`) are NOT frozen — they are
+append-only outputs.
 
-**Training-loop wiring proofs.** `tests/test_wiring.py`, `bin/train_smoke.py`.
+**Entry points + wiring proofs.** `bin/` (`train_smoke.py` — one-command train
+proof; `tournament.py` — one-command reproducible per-seat tournament),
+`scripts/tournament.sh`, and `tests/test_wiring.py`.
 
-**The freeze machinery itself.** `IMMUTABLE.md`, `scripts/check_frozen.sh`,
-`scripts/check_env.py`.
+**The freeze machinery itself.** `IMMUTABLE.md`, `IMMUTABLE.lock` (sha256 manifest),
+`scripts/check_frozen.sh`, `scripts/gen_immutable_lock.sh`, `scripts/check_env.py`.
 
 ## Frozen pins
 
