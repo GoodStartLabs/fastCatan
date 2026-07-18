@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 
 from sb3_contrib import MaskablePPO
+
+from models.baseline.kl_ppo import KLRegularizedMaskablePPO, ReferenceActor
 from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
@@ -255,6 +257,10 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20260717)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--init-from-il", default="")
+    parser.add_argument("--kl-ref", default="")
+    parser.add_argument("--kl-coef", type=float, default=0.0)
+    parser.add_argument("--kl-coef-final", type=float, default=None)
+    parser.add_argument("--kl-form", choices=["forward", "reverse"], default="forward")
     parser.add_argument("--eval-every", type=int, default=2_000_000)
     parser.add_argument("--first-eval", type=int, default=100_000)
     parser.add_argument("--eval-games", type=int, default=32)
@@ -285,7 +291,7 @@ def main() -> None:
     else:
         env = SubprocVecEnv(factories, start_method="spawn")
 
-    model = MaskablePPO(
+    model = KLRegularizedMaskablePPO(
         Phase2Policy,
         env,
         n_steps=args.n_steps,
@@ -306,6 +312,16 @@ def main() -> None:
     il_state = None
     if args.init_from_il:
         il_state = load_il_weights(model.policy, args.init_from_il)
+    model.kl_coef0 = float(args.kl_coef)
+    model.kl_coef_final = float(
+        args.kl_coef if args.kl_coef_final is None else args.kl_coef_final
+    )
+    model.kl_form = args.kl_form
+    model.kl_ref = None
+    if args.kl_ref:
+        model.kl_ref = ReferenceActor.from_il(
+            args.kl_ref, model.device, int(model.action_space.n)
+        )
     counts = parameter_counts(model.policy)
     if counts["total"] > 8_000_000:
         raise ValueError(f"parameter budget exceeded: {counts}")
