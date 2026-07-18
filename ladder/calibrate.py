@@ -214,59 +214,89 @@ def main(argv: list[str] | None = None) -> int:
     run_id = args.run_id or f"{LADDER_VERSION}-roundrobin-{tier}-{stamp}"
     timestamp = utc_now()
     commit = git_commit(repo_root)
-    completed: set[str] = set()
+    blocks_per_matchup = games // 4
+    completed: set[tuple[str, str, str]] = set()
     if args.resume and parquet_path.exists():
         existing = pd.read_parquet(parquet_path)
-        completed = set(existing.loc[existing.run_id == run_id, "candidate"].unique())
-        print(f"[{run_id}] resume: completed={sorted(completed)}", flush=True)
+        selected = existing.loc[existing.run_id == run_id]
+        counts = selected.groupby(["candidate", "opponent", "mode"]).size()
+        completed = {
+            tuple(key) for key, count in counts.items()
+            if int(count) == blocks_per_matchup
+        }
+        print(f"[{run_id}] resume: completed_matchups={len(completed)}", flush=True)
 
     started = perf_counter()
     for candidate in agents:
-        if candidate in completed:
-            continue
         opponent_names = [name for name in agents if name != candidate]
-        tasks = [
-            Task(candidate, opponent, args.master_seed, block, suppress, args.max_steps)
+        candidate_complete = all(
+            (candidate, opponent, mode) in completed
             for opponent in opponent_names
-            for suppress in (False, True)
-            for block in range(games // 4)
-        ]
-        print(
-            f"[{run_id}] candidate={candidate} tasks={len(tasks)} workers={args.workers}",
-            flush=True,
+            for mode in ("trading_on", "trading_off")
         )
-        if args.workers == 1:
-            blocks = [_execute(task) for task in tasks]
-        else:
-            with ProcessPoolExecutor(max_workers=args.workers) as executor:
-                blocks = list(executor.map(_execute, tasks, chunksize=1))
-        rows: list[dict] = []
-        for task, block in zip(tasks, blocks, strict=True):
-            opponent = REGISTRY[task.opponent]
-            rows.append(block_row(
-                block,
-                repo_root=repo_root,
-                run_id=run_id,
-                timestamp_utc=timestamp,
-                tier=tier,
-                candidate=candidate,
-                candidate_band=REGISTRY[candidate].band,
-                opponent=opponent.name,
-                opponent_band=opponent.band,
-                promotion_eligible=opponent.promotion_eligible,
-                anchor=opponent.anchor,
-                incumbent=opponent.incumbent,
-                mode="trading_off" if task.suppress_p2p else "trading_on",
-                master_seed=args.master_seed,
-                commit=commit,
-            ))
-        append_parquet(rows, parquet_path)
-        write_markdown_summary(rows, markdown_path)
+        if candidate_complete:
+            continue
+        for opponent_name in opponent_names:
+            for suppress_p2p, mode in ((False, "trading_on"), (True, "trading_off")):
+                key = (candidate, opponent_name, mode)
+                if key in completed:
+                    continue
+                tasks = [
+                    Task(
+                        candidate, opponent_name, args.master_seed, block,
+                        suppress_p2p, args.max_steps,
+                    )
+                    for block in range(blocks_per_matchup)
+                ]
+                print(
+                    f"[{run_id}] candidate={candidate} opponent={opponent_name} "
+                    f"mode={mode} blocks={len(tasks)} workers={args.workers}",
+                    flush=True,
+                )
+                if args.workers == 1:
+                    blocks = [_execute(task) for task in tasks]
+                else:
+                    with ProcessPoolExecutor(max_workers=args.workers) as executor:
+                        blocks = list(executor.map(_execute, tasks, chunksize=1))
+                opponent = REGISTRY[opponent_name]
+                rows = [
+                    block_row(
+                        block,
+                        repo_root=repo_root,
+                        run_id=run_id,
+                        timestamp_utc=timestamp,
+                        tier=tier,
+                        candidate=candidate,
+                        candidate_band=REGISTRY[candidate].band,
+                        opponent=opponent.name,
+                        opponent_band=opponent.band,
+                        promotion_eligible=opponent.promotion_eligible,
+                        anchor=opponent.anchor,
+                        incumbent=opponent.incumbent,
+                        mode=mode,
+                        master_seed=args.master_seed,
+                        commit=commit,
+                    )
+                    for block in blocks
+                ]
+                append_parquet(rows, parquet_path)
+                completed.add(key)
+                print(
+                    f"[{run_id}] checkpoint candidate={candidate} "
+                    f"opponent={opponent_name} mode={mode} games={games}",
+                    flush=True,
+                )
+
+        frame = pd.read_parquet(parquet_path)
+        candidate_rows = frame.loc[
+            (frame.run_id == run_id) & (frame.candidate == candidate)
+        ].to_dict(orient="records")
+        write_markdown_summary(candidate_rows, markdown_path)
         if not args.no_wandb:
-            mirror_wandb(rows)
+            mirror_wandb(candidate_rows)
         print(
             f"[{run_id}] candidate={candidate} complete "
-            f"games={sum(row['games'] for row in rows)}",
+            f"games={sum(int(row['games']) for row in candidate_rows)}",
             flush=True,
         )
 
