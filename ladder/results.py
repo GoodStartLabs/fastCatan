@@ -7,7 +7,6 @@ import os
 import platform
 import socket
 import subprocess
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence

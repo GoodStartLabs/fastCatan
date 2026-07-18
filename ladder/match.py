@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Callable, Protocol, Sequence
+from typing import Protocol, Sequence
 
 import numpy as np
 
@@ -82,10 +82,40 @@ def play_one(
     p2p = build_p2p_trade_filter() if suppress_p2p else None
     decisions = 0
     done = False
+    discarding_seat: int | None = None
+    obs_buf = np.zeros(fastcatan.OBS_SIZE, dtype=np.float32)
     started = perf_counter()
 
     while not done and decisions < max_steps:
-        seat = int(env.current_player)
+        turn_owner = int(env.current_player)
+        if int(env.flag) == 1:
+            env.write_obs(turn_owner, obs_buf)
+            remaining = [0, 0, 0, 0]
+            for relative in range(4):
+                absolute = (turn_owner + relative) & 3
+                remaining[absolute] = int(round(float(obs_buf[relative * 16 + 14]) * 10))
+            if discarding_seat is None:
+                # handle_roll_dice selects the lowest absolute seat first.
+                discarding_seat = next(
+                    (player for player in range(4) if remaining[player] > 0),
+                    None,
+                )
+            elif remaining[discarding_seat] == 0:
+                # Subsequent handoff is clockwise from the turn owner.
+                discarding_seat = next(
+                    (
+                        (turn_owner + offset) & 3
+                        for offset in range(1, 5)
+                        if remaining[(turn_owner + offset) & 3] > 0
+                    ),
+                    None,
+                )
+            if discarding_seat is None:
+                raise RuntimeError("discard flag has no public discarder")
+            seat = discarding_seat
+        else:
+            discarding_seat = None
+            seat = turn_owner
         env.action_mask(mask_buf)
         decision_mask = mask_buf.copy()
         if p2p is not None:
@@ -165,6 +195,10 @@ def play_rotation_block(
             )
             for seat, factory in enumerate(factories)
         ]
+        for seat, policy in enumerate(policies):
+            bind = getattr(policy, "bind_seat", None)
+            if bind is not None:
+                bind(seat)
         env.reset(board_seed)
         result = play_one(
             env,
