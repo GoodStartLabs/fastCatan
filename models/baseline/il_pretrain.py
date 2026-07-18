@@ -144,7 +144,7 @@ def main() -> None:
     }
 
     import wandb
-    run = wandb.init(project="goodsettler", name=args.run_name, config=config, reinit=True)
+    run = wandb.init(project="goodsettler-il", name=args.run_name, config=config, reinit=True)
     print(f"[wandb] {run.url}", flush=True)
 
     net = ILActorCritic().to(args.device)

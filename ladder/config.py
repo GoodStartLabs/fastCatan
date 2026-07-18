@@ -13,6 +13,6 @@ FULL_GAMES_PER_OPPONENT_MODE = 1024
 ROTATIONS_PER_BLOCK = 4
 
 INCUMBENT = "balanced-strong"
-WANDB_PROJECT = "goodsettler"
+WANDB_PROJECT = "goodsettler-eval"
 
 NO_WINNER_POLICY = "loss_for_all_seats"

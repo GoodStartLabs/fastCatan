@@ -322,7 +322,7 @@ def main() -> None:
     }
     import wandb
     run = wandb.init(
-        project="goodsettler",
+        project="goodsettler-rl",
         name=args.run_name,
         group=args.wandb_group,
         job_type="phase2-ppo",
