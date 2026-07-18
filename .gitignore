@@ -49,4 +49,5 @@ DEBUG/logs/*.log
 models/benchmarks/**/run.log
 /models/checkpoints
 /AB/results
+/wandb/
 EVAL/AB/results/tournament_mcts_alphabeta_20260606_122054.json
