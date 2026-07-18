@@ -49,6 +49,15 @@ intervals under the no-p2p-trades fidelity protocol.
 
 ## Oracle band
 
-Frozen names (implemented in Part D): `oracle-ab-d2`, `oracle-ab-d2-blur`,
-`oracle-mcts-abvalue-256`, `oracle-mcts-abvalue-1024`. All are full-information,
-logged in full runs, and excluded from promotion.
+- `oracle-ab-d2`: native depth-2 expectimax, default true chance forks.
+- `oracle-ab-d2-blur`: identical, with `chance_mode=1` catanatron blur.
+- `oracle-mcts-abvalue-256`: 256 simulations, learned prior, native `ab_value`
+  leaves, native AB-d2 pruned in-tree opponent model.
+- `oracle-mcts-abvalue-1024`: same at 1024 simulations.
+
+The MCTS prior is `models/checkpoints/alphazero_vs_ab/az_final.pt`, SHA-256
+`918a6879bff33cdc8fa61d168402ebea803bd9847ab0ec0d7a261a1349ac639a`;
+`c_puct=1.5`, `ab_value_scale=86,000,000`, true chance, no root noise. In
+trading-on mode the learner may compose p2p offers; the in-tree AB opponents do
+not propose but do respond. All four agents are full-information anchors, logged
+in full runs, and excluded from promotion.

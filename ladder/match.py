@@ -199,6 +199,9 @@ def play_rotation_block(
             bind = getattr(policy, "bind_seat", None)
             if bind is not None:
                 bind(seat)
+            set_trading_mode = getattr(policy, "set_trading_mode", None)
+            if set_trading_mode is not None:
+                set_trading_mode(not suppress_p2p)
         env.reset(board_seed)
         result = play_one(
             env,

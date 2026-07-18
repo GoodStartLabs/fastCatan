@@ -58,6 +58,7 @@ def block_row(
     incumbent: bool,
     mode: str,
     master_seed: int,
+    commit: str | None = None,
 ) -> dict:
     row = {
         "schema_version": SCHEMA_VERSION,
@@ -85,7 +86,7 @@ def block_row(
         "decisions": int(block.decisions),
         "wall_seconds": float(block.wall_seconds),
         "decisions_per_second": float(block.decisions_per_second),
-        "git_commit": git_commit(repo_root),
+        "git_commit": commit or git_commit(repo_root),
         "hostname": socket.gethostname(),
         "python_version": platform.python_version(),
     }

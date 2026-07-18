@@ -14,6 +14,12 @@ from .bridge_bots import (
 )
 from .config import INCUMBENT
 from .persona import Persona, PersonaConfig
+from .oracles import (
+    oracle_ab_d2,
+    oracle_ab_d2_blur,
+    oracle_mcts_256,
+    oracle_mcts_1024,
+)
 
 
 @dataclass(frozen=True)
@@ -63,6 +69,10 @@ _SPECS.extend([
     AgentSpec("catanatron-weighted-random", "bridge-bot", CatanatronWeightedRandom, False, anchor=True),
     AgentSpec("catanatron-value", "bridge-bot", CatanatronValueFunction, False, anchor=True, smoke=True),
     AgentSpec("catanatron-alphabeta-d1", "bridge-bot", CatanatronAlphaBetaD1, False, anchor=True),
+    AgentSpec("oracle-ab-d2", "oracle", oracle_ab_d2, False, anchor=True, smoke=True),
+    AgentSpec("oracle-ab-d2-blur", "oracle", oracle_ab_d2_blur, False, anchor=True),
+    AgentSpec("oracle-mcts-abvalue-256", "oracle", oracle_mcts_256, False, anchor=True),
+    AgentSpec("oracle-mcts-abvalue-1024", "oracle", oracle_mcts_1024, False, anchor=True),
 ])
 
 REGISTRY: dict[str, AgentSpec] = {spec.name: spec for spec in _SPECS}
