@@ -12,7 +12,7 @@ Potential-based shaping (Ng, Harada & Russell 1999):
 Potential-based shaping is policy-invariant in the discounted-return sense, so
 it speeds credit assignment WITHOUT changing which policy is optimal -- the
 win/loss terminal still defines the objective. We apply F on non-terminal steps
-only; the terminal step keeps the bare +1/-1/-2 so the win signal stays crisp
+only; the terminal step keeps the bare +1/-1/-1 so the win signal stays crisp
 and un-rescaled (a common, near-invariant practical choice).
 
 VP-only by request: phi reads ONLY the learner's victory points
@@ -78,7 +78,7 @@ class VPShapedEnv(FastCatanEnv):
     ) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         obs, reward, terminated, truncated, info = super().step(action)
         if terminated or truncated:
-            # Terminal dominated by the +1/-1/-2 win/loss; no shaping term.
+            # Terminal dominated by the +1/-1/-1 win/loss; no shaping term.
             return obs, reward, terminated, truncated, info
         phi = self._phi()
         shaped = self._gamma * phi - self._prev_phi

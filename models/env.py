@@ -27,12 +27,10 @@ MASK_WORDS = fastcatan.MASK_WORDS
 LEARNER_SEAT = 0
 WIN_VP = 10
 
-# Terminal reward for a no-winner game (stall or tie): -2, strictly worse than a
-# loss (-1), so the learner prefers losing to stalling and is pushed to close games
-# out. win=+1, loss=-1, no-winner=-2. This is the training-signal half of the stall
-# fix; the liveness half is the C++ compose cap (MAX_TRADE_COMPOSE_PER_TURN,
-# state.hpp), which guarantees turns end.
-TIE_REWARD = -2.0
+# Phase-2 terminal categorical reward: win=+1, loss=-1, no-winner=-1.  The
+# no-winner case is separately reported as a truncation; it is not shaped beyond
+# the clipped terminal category.  Liveness remains the frozen C++ compose cap.
+TIE_REWARD = -1.0
 
 # Backstop episode length, counted in learner step() calls. The C++ MAX_TURNS cap
 # (state.hpp) is the single length authority and always terminates first (worst
@@ -153,9 +151,8 @@ class FastCatanEnv(gym.Env):
         for p in range(fastcatan.NUM_PLAYERS):
             if self._env.player_vp(p) >= WIN_VP:
                 return 1.0 if p == LEARNER_SEAT else -1.0
-        # No winner (tie / no-winner terminal): penalize harder than a loss (-2 vs
-        # -1) so the learner treats stalling as strictly worse than losing and
-        # learns to close games out. See TIE_REWARD note above.
+        # No winner is the clipped terminal loss category and is reported
+        # separately by Phase-2 wrappers/evaluators.
         return TIE_REWARD
 
     def _opponent_action(self, legal: list[int]) -> int:
@@ -230,8 +227,7 @@ class FastCatanEnv(gym.Env):
             return self._read_obs(), term_r, True, False, {}
 
         if self._ep_steps >= MAX_EPISODE_STEPS:
-            # Stalled game (no winner): terminal, no bootstrap. -2 (TIE_REWARD),
-            # strictly worse than a loss, to push the learner to close out.
+            # Stalled game (no winner): clipped terminal loss category.
             return self._read_obs(), TIE_REWARD, True, False, {}
 
         return self._read_obs(), 0.0, False, False, {}

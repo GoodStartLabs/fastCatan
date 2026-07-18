@@ -52,11 +52,32 @@ except Exception as e:  # noqa: BLE001
     problems.append(f"fastcatan: import failed ({e}) — rebuild: pip install -e . --no-build-isolation")
     print(f"  [XX] {'fastcatan':<20} IMPORT FAILED: {e}")
 
-# catanatron (M4 eval opponent).
+# catanatron (M4 eval opponent) — pinned to the GoodStartLabs fork commit
+# d3f4ad0 (= 3.3.0 + rule fix #377, road-through-enemy). The differential's
+# byte-parity assumes this exact ruleset, so the git commit is a HARD pin, not
+# just the version string (frozen at substrate-v1; see IMMUTABLE.md).
+CATANATRON_PIN = "d3f4ad0"
 try:
+    import os
+    import subprocess
+
     import catanatron  # noqa: F401
 
-    print(f"  [OK] {'catanatron':<20} import ok")
+    try:
+        from importlib.metadata import version as _pkgver
+        ver = _pkgver("catanatron").split("+", 1)[0]
+    except Exception:  # noqa: BLE001
+        ver = getattr(catanatron, "__version__", "?").split("+", 1)[0]
+    src = os.path.dirname(os.path.abspath(catanatron.__file__))
+    try:
+        commit = subprocess.check_output(
+            ["git", "-C", src, "rev-parse", "HEAD"],
+            stderr=subprocess.DEVNULL, text=True).strip()
+    except Exception:  # noqa: BLE001
+        commit = None
+    ok = ver == "3.3.0" and commit is not None and commit.startswith(CATANATRON_PIN)
+    shown = f"{ver} @ {commit[:7] if commit else 'no-git-checkout'}"
+    report("catanatron", shown, f"3.3.0 @ {CATANATRON_PIN}", ok)
 except Exception as e:  # noqa: BLE001
     problems.append(f"catanatron: import failed ({e})")
     print(f"  [XX] {'catanatron':<20} IMPORT FAILED: {e}")

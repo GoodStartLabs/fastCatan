@@ -41,6 +41,7 @@ Run:
 from __future__ import annotations
 
 import argparse
+import json
 import multiprocessing as mp
 import os
 import time
@@ -132,12 +133,12 @@ def _play_games_worker(payload: dict) -> dict:
         recs: list[tuple[int, int]] = []   # (sample_index, seat)
         for _ply in range(40000):
             env.action_mask(mask_buf)
-            mask, legal = _unpack(mask_buf)
-            mask, legal = filter_p2p(mask, p2p)
+            deployment_mask, deployment_legal = _unpack(mask_buf)
+            mask, legal = filter_p2p(deployment_mask, p2p)
             if not legal:
                 break
             cp = env.current_player
-            if len(legal) == 1:
+            if len(deployment_legal) == 1:
                 _r, done = env.step(legal[0])
                 if done:
                     break
@@ -145,7 +146,8 @@ def _play_games_worker(payload: dict) -> dict:
 
             if student is not None and cp != 0:
                 # DAgger: opponent seats are plain AB, not recorded.
-                a = env.ab_decide(cp, depth, prune, banned, chance_mode)
+                a = (legal[0] if len(legal) == 1 else
+                     env.ab_decide(cp, depth, prune, banned, chance_mode))
                 if a == _NO_ACTION or a not in legal:
                     a = rng.choice(legal)
                     fallbacks += 1
@@ -154,7 +156,8 @@ def _play_games_worker(payload: dict) -> dict:
                     break
                 continue
 
-            teacher_a = env.ab_decide(cp, depth, prune, banned, chance_mode)
+            teacher_a = (legal[0] if len(legal) == 1 else
+                         env.ab_decide(cp, depth, prune, banned, chance_mode))
             if teacher_a == _NO_ACTION or teacher_a not in legal:
                 teacher_a = rng.choice(legal)  # safety net; ~never (counted)
                 fallbacks += 1
@@ -162,7 +165,11 @@ def _play_games_worker(payload: dict) -> dict:
             write_obs(cp, obs_buf)
             obs_l.append(obs_buf.astype(np.float16))
             act_l.append(np.uint16(teacher_a))
-            mask_l.append(np.packbits(mask))
+            # Teacher selection/play remains no-p2p, but CE normalizes over the
+            # full deployment-legal mask.  This teaches trading-on PPO that AB's
+            # action beats the p2p alternatives instead of leaving those logits
+            # at random initialization.
+            mask_l.append(np.packbits(deployment_mask))
             squash, margin = _abv_label(env, cp, abv_scale)
             abv_l.append(np.float32(squash))
             abm_l.append(np.float64(margin))
@@ -276,6 +283,23 @@ def main() -> None:
                   f"won={done_won} fallbacks={done_fb} "
                   f"({done_games/el:.1f} g/s)", flush=True)
 
+    manifest = {
+        "games": done_games,
+        "decisions": done_dec,
+        "fallbacks": done_fb,
+        "won": done_won,
+        "ab_depth": args.ab_depth,
+        "ab_prune": args.ab_prune,
+        "catanatron_chance": args.catanatron_chance,
+        "full_obs": args.full_obs,
+        "seed": args.seed,
+        "games_per_shard": args.games_per_shard,
+        "shards": n_shards,
+        "wall_seconds": time.time() - t0,
+    }
+    (out / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     print(f"[done] {done_games} games, {done_dec} decisions, "
           f"{done_fb} fallbacks ({100*done_fb/max(done_dec,1):.3f}%), "
           f"{time.time()-t0:.0f}s -> {out}", flush=True)

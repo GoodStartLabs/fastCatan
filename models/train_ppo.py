@@ -112,7 +112,7 @@ def main() -> None:
                         "thesis ablation. Train and eval must match.")
     p.add_argument("--shaped", action="store_true",
                    help="Use VPShapedEnv (models/env_shaped.py): VP-only potential "
-                        "shaping on top of the sparse +1/-1/-2 terminal. gamma is "
+                        "shaping on top of the sparse +1/-1/-1 terminal. gamma is "
                         "shared with the learner.")
     p.add_argument("--shaping-coef", type=float, default=0.1,
                    help="Potential coefficient phi=coef*own_VP (only with --shaped).")
