@@ -40,10 +40,12 @@ POOL_NAMES = (
 )
 POOL_INDEX = {name: idx for idx, name in enumerate(POOL_NAMES)}
 
-# Initial weak/basic mass = 0.60.  Strong-anchor mass
-# {balanced-strong,catanatron-value} = 0.20.
-INITIAL_WEIGHTS = (0.20, 0.20, 0.20, 0.08, 0.07, 0.05, 0.10, 0.10)
-ADVANCED_WEIGHTS = (0.08, 0.08, 0.14, 0.14, 0.12, 0.10, 0.17, 0.17)
+# C2 reweight toward the strong tier (warm-started from x3_plain, ent_coef=0,
+# anchored -> no exploration/hard-opponent double jeopardy).  Initial
+# weak/basic mass = 0.41; strong-anchor {balanced-strong,catanatron-value} =
+# 0.38 initial -> 0.50 after the cap lift.
+INITIAL_WEIGHTS = (0.13, 0.13, 0.15, 0.10, 0.06, 0.05, 0.18, 0.20)
+ADVANCED_WEIGHTS = (0.06, 0.06, 0.10, 0.12, 0.08, 0.08, 0.25, 0.25)
 MID_TIER = frozenset({
     "builder-basic", "builder-strong", "trade-happy", "trade-averse",
 })

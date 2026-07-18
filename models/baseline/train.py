@@ -13,7 +13,11 @@ from pathlib import Path
 
 from sb3_contrib import MaskablePPO
 
-from models.baseline.kl_ppo import KLRegularizedMaskablePPO, ReferenceActor
+from models.baseline.kl_ppo import (
+    KLRegularizedMaskablePPO,
+    ReferenceActor,
+    warmstart_policy,
+)
 from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
@@ -311,7 +315,7 @@ def main() -> None:
     )
     il_state = None
     if args.init_from_il:
-        il_state = load_il_weights(model.policy, args.init_from_il)
+        il_state = warmstart_policy(model.policy, args.init_from_il)
     model.kl_coef0 = float(args.kl_coef)
     model.kl_coef_final = float(
         args.kl_coef if args.kl_coef_final is None else args.kl_coef_final
@@ -319,7 +323,7 @@ def main() -> None:
     model.kl_form = args.kl_form
     model.kl_ref = None
     if args.kl_ref:
-        model.kl_ref = ReferenceActor.from_il(
+        model.kl_ref = ReferenceActor.from_checkpoint(
             args.kl_ref, model.device, int(model.action_space.n)
         )
     counts = parameter_counts(model.policy)

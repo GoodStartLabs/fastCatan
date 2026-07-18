@@ -55,6 +55,31 @@ class ReferenceActor(nn.Module):
             param.requires_grad_(False)
         return module
 
+    @classmethod
+    def from_ppo_zip(cls, zip_path, device, action_dim: int) -> "ReferenceActor":
+        sd = _policy_state_dict_from_zip(zip_path, device)
+        module = cls(action_dim)
+        a_pref, h_pref = "mlp_extractor.actor.", "action_net."
+        module.actor.load_state_dict(
+            {k[len(a_pref):]: v for k, v in sd.items() if k.startswith(a_pref)}
+        )
+        module.head.load_state_dict(
+            {k[len(h_pref):]: v for k, v in sd.items() if k.startswith(h_pref)}
+        )
+        module.to(device)
+        module.eval()
+        for param in module.parameters():
+            param.requires_grad_(False)
+        return module
+
+    @classmethod
+    def from_checkpoint(cls, path, device, action_dim: int) -> "ReferenceActor":
+        return (
+            cls.from_ppo_zip(path, device, action_dim)
+            if str(path).endswith(".zip")
+            else cls.from_il(path, device, action_dim)
+        )
+
     @th.no_grad()
     def forward(self, observation: th.Tensor) -> th.Tensor:
         latent = self.actor(observation[..., :ACTOR_OBS_SIZE])
@@ -200,3 +225,28 @@ class KLRegularizedMaskablePPO(MaskablePPO):
         if getattr(self, "kl_ref", None) is not None:
             self.logger.record("train/kl_anchor", float(np.mean(anchor_vals)) if anchor_vals else 0.0)
             self.logger.record("train/kl_beta", self._anchor_beta())
+
+
+def _policy_state_dict_from_zip(zip_path, device) -> dict:
+    import io, zipfile
+    with zipfile.ZipFile(str(zip_path)) as z, z.open("policy.pth") as f:
+        return th.load(io.BytesIO(f.read()), map_location=device, weights_only=False)
+
+
+def warmstart_policy(policy, path) -> dict:
+    """Initialise a PPO policy from a warm-start checkpoint.
+
+    Dispatches on suffix: an SB3 ``.zip`` (e.g. the creative track's x3_plain)
+    loads the full Phase2Policy state dict; the IL ``.pt`` format defers to
+    load_il_weights (four supervised modules).
+    """
+    if str(path).endswith(".zip"):
+        sd = _policy_state_dict_from_zip(path, policy.device)
+        missing, unexpected = policy.load_state_dict(sd, strict=False)
+        miss = [k for k in missing if "features_extractor" not in k]
+        unexp = [k for k in unexpected if "features_extractor" not in k]
+        if miss or unexp:
+            print(f"[warmstart-zip] missing={miss} unexpected={unexp}", flush=True)
+        return {"source": str(path), "val_top1": None}
+    from models.baseline.policy import load_il_weights
+    return load_il_weights(policy, path)
