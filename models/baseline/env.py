@@ -29,7 +29,7 @@ from models.baseline.policy import (
 
 
 POOL_NAMES = (
-    "random-legal",
+    "x3-plain",
     "weighted-random",
     "builder-basic",
     "builder-strong",
@@ -60,6 +60,47 @@ class CurriculumState:
     """Process-local curriculum knob; a shared proxy may supply ``value``."""
 
     value: int = 0
+
+
+import os
+
+
+X3_CKPT_DEFAULT = "/home/ubuntu/goodSettler/x3_plain.zip"
+
+
+def _load_checkpoint_opponent_model():
+    """Load the frozen x3_plain platform once per env (CPU; opponents are cheap)."""
+    from sb3_contrib import MaskablePPO
+
+    path = os.environ.get("X3_CKPT", X3_CKPT_DEFAULT)
+    return MaskablePPO.load(path, device="cpu")
+
+
+class CheckpointPlayer:
+    """A frozen neural checkpoint acting as a pool opponent (Player interface).
+
+    Reads only its OWN seat's legal observation and samples a masked action, so
+    it introduces trade pressure without any path into the learner's actor input.
+    """
+
+    def __init__(self, model) -> None:
+        self._model = model
+        self._seat = 0
+        self._obs = np.zeros(ACTOR_OBS_SIZE, dtype=np.float32)
+
+    def bind_seat(self, seat: int) -> None:
+        self._seat = int(seat)
+
+    def set_trading_mode(self, on: bool) -> None:  # its own policy decides trades
+        return None
+
+    def act(self, env, mask_words: np.ndarray) -> int:
+        env.write_obs(self._seat, self._obs)
+        masks = _unpack_mask(mask_words)
+        action, _ = self._model.predict(
+            self._obs, action_masks=masks, deterministic=False,
+        )
+        return int(action)
 
 
 class OpponentPoolSampler:
@@ -146,6 +187,9 @@ class Phase2CatanEnv(gym.Env):
         self._seed_seq = random.Random(seed)
         self._rng = random.Random(seed ^ 0xC0FFEE)
         self._sampler = OpponentPoolSampler(seed, curriculum)
+        self._x3_model = (
+            _load_checkpoint_opponent_model() if "x3-plain" in POOL_NAMES else None
+        )
         self._rolling_mid: deque[int] = deque(maxlen=rolling_window)
         self._curriculum_min_games = int(curriculum_min_games)
         self._obs = np.zeros(ACTOR_OBS_SIZE, dtype=np.float32)
@@ -304,7 +348,10 @@ class Phase2CatanEnv(gym.Env):
         self._seat_names.clear()
         for rel, name in enumerate(names, start=1):
             seat = (self._learner_seat + rel) & 3
-            opponent = build_agent(name, self._seed_seq.getrandbits(64))
+            if name == "x3-plain":
+                opponent = CheckpointPlayer(self._x3_model)
+            else:
+                opponent = build_agent(name, self._seed_seq.getrandbits(64))
             bind = getattr(opponent, "bind_seat", None)
             if bind is not None:
                 bind(seat)
