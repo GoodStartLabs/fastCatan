@@ -29,7 +29,7 @@ from models.baseline.policy import (
 
 
 POOL_NAMES = (
-    "x3-plain",
+    "random-legal",
     "weighted-random",
     "builder-basic",
     "builder-strong",
@@ -39,6 +39,15 @@ POOL_NAMES = (
     "catanatron-value",
 )
 POOL_INDEX = {name: idx for idx, name in enumerate(POOL_NAMES)}
+
+# C3: x3-plain is a TRAINING-only opponent (a frozen neural checkpoint) that
+# substitutes for random-legal in the sampled training pool.  POOL_NAMES stays the
+# fixed benchmark set (evaluate.py + the pool-ID encoding are unchanged); x3-plain
+# borrows random-legal's one-hot slot for the privileged critic.
+TRAIN_POOL_NAMES = ("x3-plain",) + POOL_NAMES[1:]
+
+def _encode_pool_index(name: str) -> int:
+    return POOL_INDEX.get(name, 0)
 
 # Initial weak/basic mass = 0.60.  Strong-anchor mass
 # {balanced-strong,catanatron-value} = 0.20.
@@ -122,7 +131,7 @@ class OpponentPoolSampler:
 
     def sample_names(self, n: int = 3) -> tuple[str, ...]:
         # random.choices performs independent draws with replacement.
-        return tuple(self.rng.choices(POOL_NAMES, weights=self.weights, k=n))
+        return tuple(self.rng.choices(TRAIN_POOL_NAMES, weights=self.weights, k=n))
 
     def advance(self) -> bool:
         if self.stage:
@@ -188,7 +197,7 @@ class Phase2CatanEnv(gym.Env):
         self._rng = random.Random(seed ^ 0xC0FFEE)
         self._sampler = OpponentPoolSampler(seed, curriculum)
         self._x3_model = (
-            _load_checkpoint_opponent_model() if "x3-plain" in POOL_NAMES else None
+            _load_checkpoint_opponent_model() if "x3-plain" in TRAIN_POOL_NAMES else None
         )
         self._rolling_mid: deque[int] = deque(maxlen=rolling_window)
         self._curriculum_min_games = int(curriculum_min_games)
@@ -231,7 +240,7 @@ class Phase2CatanEnv(gym.Env):
         onehots = self._train_obs[tail + FULL_OBS_SIZE:]
         onehots.fill(0.0)
         for rel, name in enumerate(self.opponent_lineup):
-            onehots[rel * POOL_SIZE + POOL_INDEX[name]] = 1.0
+            onehots[rel * POOL_SIZE + _encode_pool_index(name)] = 1.0
         return self._train_obs.copy()
 
     def _acting_seat(self) -> int:
