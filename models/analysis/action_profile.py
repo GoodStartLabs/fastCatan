@@ -170,6 +170,12 @@ class Profile:
     loss_vp_gap: Counter = field(default_factory=Counter)  # winner_vp - subject_vp
     loss_subject_vp: Counter = field(default_factory=Counter)
     loser_to_winner_opp: Counter = field(default_factory=Counter)
+    # incoherence probe: does a trade acquisition get spent on a build within N turns?
+    coh_acquire_events: int = 0
+    coh_covered_by_build: int = 0   # acquisitions followed by a build within N turns
+    coh_builds_total: int = 0
+    coh_end_hand_total: int = 0     # subject hand size at game end (hoarding signal)
+    coh_games: int = 0
 
 
 def record_decision(prof: Profile, env, seat: int, action: int) -> None:
@@ -221,6 +227,11 @@ def profiled_play_one(env, seat_policies, subject_seat, prof, suppress_p2p, max_
     done = False
     discarding_seat = None
     obs_buf = np.zeros(fastcatan.OBS_SIZE, dtype=np.float32)
+    # coherence (incoherence probe) per-game state for the subject
+    COH_N = 2  # subject-turns window
+    subj_turn = 0
+    acquire_turns: list[int] = []
+    build_turns: list[int] = []
 
     while not done and decisions < max_steps:
         turn_owner = int(env.current_player)
@@ -251,6 +262,15 @@ def profiled_play_one(env, seat_policies, subject_seat, prof, suppress_p2p, max_
         action = int(seat_policies[seat].act(env, decision_mask.copy()))
         if seat == subject_seat:
             record_decision(prof, env, seat, action)
+            # coherence tracking
+            if action == _END:
+                subj_turn += 1
+            elif action == _ACCEPT or (_CONFIRM <= action < _CONFIRM + 4):
+                acquire_turns.append(subj_turn)
+            elif (_SETTLE <= action < _SETTLE + 54) or (_CITY <= action < _CITY + 54) \
+                    or (_ROAD <= action < _ROAD + 72) or action == _BUYDEV:
+                build_turns.append(subj_turn)
+                prof.coh_builds_total += 1
         _, done = env.step(action)
         decisions += 1
 
@@ -260,6 +280,15 @@ def profiled_play_one(env, seat_policies, subject_seat, prof, suppress_p2p, max_
         if vps[p] >= 10:
             winner = p
             break
+    # fold coherence: an acquisition is "covered" if the subject builds within
+    # COH_N of its own turns after acquiring (i.e., it spends what it traded for).
+    prof.coh_games += 1
+    prof.coh_acquire_events += len(acquire_turns)
+    bt = sorted(build_turns)
+    for at in acquire_turns:
+        if any(at <= b <= at + COH_N for b in bt):
+            prof.coh_covered_by_build += 1
+    prof.coh_end_hand_total += sum(int(env.player_resource(subject_seat, r)) for r in range(5))
     return winner, vps
 
 
@@ -377,6 +406,16 @@ def summarize(prof: Profile) -> dict:
             "steals": prof.steals,
             "steal_on_leader_rate": round(prof.steal_on_leader / prof.steals, 3) if prof.steals else None,
             "victim_vp_rank_share": dist(prof.steal_victim_vp_rank),
+        },
+        "coherence": {
+            "trade_to_build_rate": round(prof.coh_covered_by_build / prof.coh_acquire_events, 3)
+            if prof.coh_acquire_events else None,
+            "acquire_events_per_game": round(prof.coh_acquire_events / prof.coh_games, 3)
+            if prof.coh_games else None,
+            "builds_per_game": round(prof.coh_builds_total / prof.coh_games, 3)
+            if prof.coh_games else None,
+            "end_hand_per_game": round(prof.coh_end_hand_total / prof.coh_games, 3)
+            if prof.coh_games else None,
         },
         "outcomes": {
             "per_opponent": {k: {**v, "win_rate": round(v["w"] / v["g"], 4) if v["g"] else None}
