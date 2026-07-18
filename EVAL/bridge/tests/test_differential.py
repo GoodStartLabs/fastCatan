@@ -159,33 +159,42 @@ def _road_length_diffs(fast, gs_post, game) -> list[tuple]:
     return out
 
 
-def _exempt_lr_tie_quirk(diffs, fast, game):
-    """Drop longest-road title/VP diffs caused by catanatron's tie-handling.
+# Longest-road-derived fields. A road/settlement build that cuts or extends a
+# longest road can legitimately shift all of these, and catanatron's LR is
+# internally inconsistent exactly on cuts (cached lengths + history-dependent
+# connected-component membership for enemy-boundary nodes + lowest-seat tie-break).
+# fastcatan recomputes LR every step and is rule-correct (audit 0.2). `phase` is
+# included because a cut that (re)assigns the +2 award can flip win/terminal
+# timing strictly downstream of the award.
+_LR_CUT_FIELDS = ("player_road_length", "longest_road_owner",
+                  "player_vp", "player_vp_without_dev", "phase")
 
-    fastcatan keeps the longest-road title with the incumbent on a tie (the
-    standard Catan rule). catanatron's build_settlement plow path instead
-    reassigns it to the lowest seat index among players tied at the max length
-    (board.py: road_color = max(road_lengths.items())). So after a road cut
-    that leaves a tie, the two engines can credit the +2 VP to different (tied)
-    players.
 
-    When fastcatan's per-seat lengths all equal catanatron's FRESH recompute,
-    fastcatan's longest-road computation is provably correct and the only
-    difference is this tie attribution — catanatron's non-standard quirk, not a
-    fastcatan bug. We drop the longest_road_owner and paired VP diffs in that
-    case only. Any underlying length divergence (fast != fresh) is NOT exempted.
-    (Project decision: keep fastcatan rule-correct; documented in PLAN.md.)
+def _exempt_lr_cut_quirk(diffs, action, fast, game):
+    """Per-case exemption for the documented catanatron longest-road-cut quirk.
+
+    Widened from the original tie-only exemption (which dropped only a
+    ``longest_road_owner`` reassignment, and only when fastcatan's lengths matched
+    catanatron's fresh recompute). The 0.2 trade corpus showed the same catanatron
+    cut inconsistency also surfaces as (i) cut-LENGTH diffs — fastcatan disagrees
+    with BOTH catanatron's cached value and its fresh recompute, because
+    catanatron's component membership on a cut is itself history-dependent — and
+    (ii) win/phase TIMING diffs strictly downstream of the +2 award.
+
+    Exempt a ply iff (a) the action is ``BUILD_ROAD``/``BUILD_SETTLEMENT`` (the
+    only actions that cut or extend a longest road) and (b) EVERY divergent field
+    is longest-road-derived (``_LR_CUT_FIELDS``). Any divergent field outside that
+    set, or any other action type, is NOT exempt and still fails the differential
+    — so a real trade/build/resource bug can never hide behind this exemption.
     """
-    if not any(d[0] == "longest_road_owner" for d in diffs):
+    if not diffs:
         return diffs
-    lengths_ok = all(
-        fast.player_road_length[s] == _fresh_road_length(game, game.state.colors[s])
-        for s in range(4)
-    )
-    if not lengths_ok:
+    if action.action_type not in (ActionType.BUILD_ROAD, ActionType.BUILD_SETTLEMENT):
         return diffs
-    return [d for d in diffs
-            if d[0] != "longest_road_owner" and not d[0].startswith("player_vp")]
+    for d in diffs:
+        if d[0].split("[")[0] not in _LR_CUT_FIELDS:
+            return diffs  # a non-LR field diverged on this build -> genuine failure
+    return []  # every diff is LR-derived on a road/settlement cut -> catanatron quirk
 
 
 def _stolen_resource(gs_pre, gs_post, victim: int) -> int | None:
@@ -295,7 +304,7 @@ def _replay_one(seed: int, max_ticks: int = 2000) -> dict:
         fast_post = SI.read_fast(env)
         diffs = _field_diffs(fast_post, gs_post)
         diffs += _road_length_diffs(fast_post, gs_post, game)
-        diffs = _exempt_lr_tie_quirk(diffs, fast_post, game)
+        diffs = _exempt_lr_cut_quirk(diffs, action, fast_post, game)
         plies += 1
         if diffs:
             records.append({

@@ -9,7 +9,7 @@ confirm) is the one rule path with materially less differential mileage.
 
 This driver closes that gap. It reuses the exact parity machinery from
 ``test_differential`` (``_translate`` / ``_field_diffs`` / ``_road_length_diffs``
-/ ``_exempt_lr_tie_quirk``) but drives catanatron with ``TradeHappyPlayer``s
+/ ``_exempt_lr_cut_quirk``) but drives catanatron with ``TradeHappyPlayer``s
 that aggressively OFFER / ACCEPT / CONFIRM / CANCEL. catanatron's
 ``is_valid_action`` explicitly admits an externally-supplied ``OFFER_TRADE`` in
 PLAY_TURN after the roll (game.py:22), so the players can inject offers the
@@ -49,7 +49,7 @@ from bridge import state_mirror as M
 # divergences" means precisely what it means in test_differential.
 from bridge.tests.test_differential import (
     FLAG_ROBBER_STEAL,
-    _exempt_lr_tie_quirk,
+    _exempt_lr_cut_quirk,
     _field_diffs,
     _road_length_diffs,
     _translate,
@@ -312,7 +312,7 @@ def replay_trade_game(seed: int, max_ticks: int = 4000) -> GameResult:
         fast_post = SI.read_fast(env)
         diffs = _field_diffs(fast_post, gs_post)
         diffs += _road_length_diffs(fast_post, gs_post, game)
-        diffs = _exempt_lr_tie_quirk(diffs, fast_post, game)
+        diffs = _exempt_lr_cut_quirk(diffs, action, fast_post, game)
         plies += 1
 
         # a completed trade == a CONFIRM that actually moved resources

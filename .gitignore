@@ -50,3 +50,6 @@ models/benchmarks/**/run.log
 /models/checkpoints
 /AB/results
 EVAL/AB/results/tournament_mcts_alphabeta_20260606_122054.json
+
+# W&B run artifacts (train_smoke etc.)
+wandb/
