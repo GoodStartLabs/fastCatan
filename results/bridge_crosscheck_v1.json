@@ -1,0 +1,83 @@
+{
+  "games_per_bot": 200,
+  "seed": 24601,
+  "protocol": "one bot vs three uniform random; no p2p trades",
+  "results": {
+    "alphabeta-d1": {
+      "native": {
+        "wins": 200,
+        "games": 200,
+        "no_winner": 0,
+        "rate": 1.0,
+        "ci95": [
+          0.9811539940816791,
+          1.0
+        ],
+        "decisions": 59689,
+        "wall_seconds": 0.5108330919993023
+      },
+      "real_catanatron": {
+        "wins": 200,
+        "games": 200,
+        "no_winner": 0,
+        "rate": 1.0,
+        "ci95": [
+          0.9811539940816791,
+          1.0
+        ]
+      },
+      "ci_overlap": true
+    },
+    "value": {
+      "native": {
+        "wins": 200,
+        "games": 200,
+        "no_winner": 0,
+        "rate": 1.0,
+        "ci95": [
+          0.9811539940816791,
+          1.0
+        ],
+        "decisions": 58795,
+        "wall_seconds": 0.48963516700496257
+      },
+      "real_catanatron": {
+        "wins": 200,
+        "games": 200,
+        "no_winner": 0,
+        "rate": 1.0,
+        "ci95": [
+          0.9811539940816791,
+          1.0
+        ]
+      },
+      "ci_overlap": true
+    },
+    "weighted-random": {
+      "native": {
+        "wins": 87,
+        "games": 200,
+        "no_winner": 0,
+        "rate": 0.435,
+        "ci95": [
+          0.368156071588974,
+          0.5042939091804078
+        ],
+        "decisions": 199839,
+        "wall_seconds": 1.2560976800041317
+      },
+      "real_catanatron": {
+        "wins": 92,
+        "games": 200,
+        "no_winner": 0,
+        "rate": 0.46,
+        "ci95": [
+          0.39232931140961247,
+          0.5291783690638533
+        ]
+      },
+      "ci_overlap": true
+    }
+  },
+  "all_ci_overlap": true
+}
