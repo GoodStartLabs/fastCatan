@@ -5,6 +5,7 @@ import argparse
 import json
 import math
 import os
+import signal
 from dataclasses import asdict
 from pathlib import Path
 
@@ -30,9 +31,11 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--device", default="cuda")
     p.add_argument("--hidden", default="512,512,256")
     p.add_argument("--opponents", default="random",
-                   help="one repeated or three comma-separated specs: random, "
-                        "self, ab1, ab2, checkpoint:/path/to/net.pt")
+                   help="comma-separated vectorized pool: random, self, ab1, "
+                        "ab2, or checkpoint:/path (one spec repeats x3)")
     p.add_argument("--init-from", default="")
+    p.add_argument("--resume", default="",
+                   help="checkpoint to resume net+optimizer+decisions+rng from")
     p.add_argument("--duration-seconds", type=float, default=1800.0)
     p.add_argument("--max-learner-decisions", type=int, default=0)
     p.add_argument("--rollout-decisions", type=int, default=262144)
@@ -65,6 +68,11 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--wandb-entity", default="good-start-labs")
     p.add_argument("--wandb-project", default="goodsettler-rl")
     p.add_argument("--wandb-name", default="batched-ppo-smoke")
+    p.add_argument("--wandb-group", default="")
+    p.add_argument("--wandb-notes", default="")
+    p.add_argument("--tripwire-entropy-max", type=float, default=0.0)
+    p.add_argument("--tripwire-min-throughput", type=float, default=0.0)
+    p.add_argument("--tripwire-low-logs", type=int, default=6)
     p.add_argument("--log-interval", type=float, default=10.0)
     return p
 
@@ -83,6 +91,7 @@ def main() -> None:
         hidden=_hidden(args.hidden),
         opponents=_opponents(args.opponents),  # type: ignore[arg-type]
         init_from=args.init_from,
+        resume=args.resume,
         rollout_decisions=args.rollout_decisions,
         batch_size=args.batch_size,
         update_epochs=args.update_epochs,
@@ -108,6 +117,8 @@ def main() -> None:
             entity=args.wandb_entity,
             project=args.wandb_project,
             name=args.wandb_name,
+            group=args.wandb_group or None,
+            notes=args.wandb_notes or None,
             mode=args.wandb_mode,
             config=asdict(cfg),
             tags=["batched-trainer", "spec-3.2"],
@@ -124,7 +135,11 @@ def main() -> None:
                      "promotion/no_winner": before_no_winner,
                      "learner_decisions": 0})
 
+    low_throughput_logs = 0
+    high_entropy_logs = 0
+
     def log_callback(values):
+        nonlocal low_throughput_logs, high_entropy_logs
         print(json.dumps({"progress": values}, sort_keys=True), flush=True)
         if run is not None:
             payload = {
@@ -142,6 +157,41 @@ def main() -> None:
             for key, value in values.get("last_update", {}).items():
                 payload[f"train/{key}"] = value
             run.log(payload)
+
+        tripwire = None
+        monitored = [values["entropy"], values["learner_decisions_per_s"]]
+        monitored.extend(values.get("last_update", {}).values())
+        if not all(math.isfinite(float(value)) for value in monitored):
+            tripwire = "non-finite training metric"
+        if (args.tripwire_entropy_max
+                and values["entropy"] > args.tripwire_entropy_max):
+            high_entropy_logs += 1
+        else:
+            high_entropy_logs = 0
+        if not tripwire and high_entropy_logs >= 2:
+            tripwire = (
+                f"entropy {values['entropy']:.6f} > "
+                f"{args.tripwire_entropy_max:.6f} for "
+                f"{high_entropy_logs} consecutive logs"
+            )
+        if (args.tripwire_min_throughput
+                and values["learner_decisions_per_s"]
+                < args.tripwire_min_throughput):
+            low_throughput_logs += 1
+        else:
+            low_throughput_logs = 0
+        if (not tripwire and args.tripwire_min_throughput
+                and low_throughput_logs >= args.tripwire_low_logs):
+            tripwire = (
+                f"learner throughput below {args.tripwire_min_throughput:.0f} "
+                f"decisions/s for {low_throughput_logs} consecutive logs"
+            )
+        if tripwire:
+            print(f"TRIPWIRE={tripwire}", flush=True)
+            if run is not None:
+                run.summary["tripwire"] = tripwire
+                run.log({"tripwire/triggered": 1})
+            os.kill(os.getpid(), signal.SIGINT)
 
     summary = trainer.run(
         duration_seconds=args.duration_seconds,

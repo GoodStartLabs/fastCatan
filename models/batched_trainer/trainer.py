@@ -8,15 +8,18 @@ turns never become fake learner samples.
 """
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import time
+import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import torch
+from torch import nn
 
 import fastcatan as fc
 from models.alphazero.net import PolicyValueNet, load_policy_value_net
@@ -79,8 +82,9 @@ class TrainerConfig:
     seed: int = 0
     device: str = "cuda"
     hidden: tuple[int, ...] = (512, 512, 256)
-    opponents: tuple[str, str, str] = ("random", "random", "random")
+    opponents: tuple[str, ...] = ("random", "random", "random")
     init_from: str = ""
+    resume: str = ""
     rollout_decisions: int = 262_144
     batch_size: int = 65_536
     update_epochs: int = 1
@@ -99,11 +103,22 @@ class TrainerConfig:
 
 
 class SeatAssignments:
-    """Per-env permutation of policy slots 0..3; slot 0 is the learner."""
+    """Per-env seat assignments; slot 0 is always the sole learner.
 
-    def __init__(self, n: int, rng: np.random.Generator) -> None:
+    The original three-opponent configuration remains a permutation of slots
+    0..3.  A larger opponent pool samples each non-learner seat uniformly from
+    pool slots 1..N, which permits a vectorized mixture with more policies than
+    physical opponent seats.
+    """
+
+    def __init__(
+        self, n: int, rng: np.random.Generator, opponent_policy_count: int = 3
+    ) -> None:
+        if opponent_policy_count < 1 or opponent_policy_count > 254:
+            raise ValueError("opponent policy count must be in [1, 254]")
         self.n = n
         self.rng = rng
+        self.opponent_policy_count = opponent_policy_count
         self.seat_to_policy = np.empty((n, fc.NUM_PLAYERS), dtype=np.uint8)
         self.reshuffle(np.arange(n, dtype=np.int64))
 
@@ -111,8 +126,21 @@ class SeatAssignments:
         env_indices = np.asarray(env_indices, dtype=np.int64)
         if not env_indices.size:
             return
-        keys = self.rng.random((env_indices.size, fc.NUM_PLAYERS))
-        self.seat_to_policy[env_indices] = np.argsort(keys, axis=1).astype(np.uint8)
+        if self.opponent_policy_count == 3:
+            keys = self.rng.random((env_indices.size, fc.NUM_PLAYERS))
+            self.seat_to_policy[env_indices] = np.argsort(keys, axis=1).astype(np.uint8)
+            return
+        assignments = self.rng.integers(
+            1,
+            self.opponent_policy_count + 1,
+            size=(env_indices.size, fc.NUM_PLAYERS),
+            dtype=np.uint8,
+        )
+        learner_seats = self.rng.integers(
+            0, fc.NUM_PLAYERS, size=env_indices.size
+        )
+        assignments[np.arange(env_indices.size), learner_seats] = 0
+        self.seat_to_policy[env_indices] = assignments
 
     @property
     def learner_seats(self) -> np.ndarray:
@@ -126,6 +154,55 @@ class SeatAssignments:
 def _load_net(path: str, device: str) -> PolicyValueNet:
     state = torch.load(path, map_location=device, weights_only=False)
     return load_policy_value_net(state, device)
+
+
+class _LegacyPhase2Actor(nn.Module):
+    """Batched GPU adapter for the legal-information Phase-2 actor."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.actor = nn.Sequential(
+            nn.LayerNorm(fc.OBS_SIZE),
+            nn.Linear(fc.OBS_SIZE, 2048), nn.GELU(),
+            nn.Linear(2048, 1024), nn.GELU(),
+            nn.Linear(1024, 512), nn.GELU(),
+        )
+        self.head = nn.Linear(512, fc.NUM_ACTIONS)
+
+    def forward(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        logits = self.head(self.actor(obs[..., :fc.OBS_SIZE]))
+        return logits, torch.zeros(obs.shape[0], device=obs.device, dtype=obs.dtype)
+
+
+def _load_opponent_net(path: str, device: str) -> nn.Module:
+    """Load AlphaZero nets plus the frozen il_best/x3_plain actor formats."""
+    if Path(path).suffix == ".zip":
+        with zipfile.ZipFile(path) as archive:
+            state = torch.load(
+                io.BytesIO(archive.read("policy.pth")),
+                map_location=device,
+                weights_only=False,
+            )
+        actor_state = {
+            key.removeprefix("mlp_extractor.actor."): value
+            for key, value in state.items()
+            if key.startswith("mlp_extractor.actor.")
+        }
+        head_state = {
+            key.removeprefix("action_net."): value
+            for key, value in state.items()
+            if key.startswith("action_net.")
+        }
+    else:
+        state = torch.load(path, map_location=device, weights_only=False)
+        if "net_state" in state:
+            return load_policy_value_net(state, device)
+        actor_state = state["actor_body"]
+        head_state = state["actor_head"]
+    module = _LegacyPhase2Actor().to(device)
+    module.actor.load_state_dict(actor_state)
+    module.head.load_state_dict(head_state)
+    return module
 
 
 def _sample_random_legal(
@@ -150,7 +227,9 @@ class BatchedTrainer:
         self.rng = np.random.default_rng(config.seed)
         torch.manual_seed(config.seed)
 
-        if config.init_from:
+        if config.resume:
+            self.net = _load_net(config.resume, config.device)
+        elif config.init_from:
             self.net = _load_net(config.init_from, config.device)
         else:
             self.net = PolicyValueNet(hidden=config.hidden).to(self.device)
@@ -171,7 +250,7 @@ class BatchedTrainer:
         for spec in set(self.opponent_specs):
             if spec.startswith("checkpoint:"):
                 path = spec.split(":", 1)[1]
-                net = _load_net(path, config.device)
+                net = _load_opponent_net(path, config.device)
                 net.eval()
                 for parameter in net.parameters():
                     parameter.requires_grad_(False)
@@ -180,7 +259,9 @@ class BatchedTrainer:
         n = config.num_envs
         self.env = fc.BatchedEnv(n, config.seed)
         self.env.reset()
-        self.assignments = SeatAssignments(n, self.rng)
+        self.assignments = SeatAssignments(
+            n, self.rng, opponent_policy_count=len(self.opponent_specs)
+        )
 
         self.sigs = np.empty((n, fc.SIG_INTS), dtype=np.int32)
         self.povs = np.empty(n, dtype=np.uint8)
@@ -220,22 +301,25 @@ class BatchedTrainer:
         self.episodes = 0
         self.entropy_sum = 0.0
         self.entropy_count = 0
+
+        if config.resume:
+            self._load_resume(config.resume)
         self.last_update_metrics: dict[str, float] = {}
         self.times = {name: 0.0 for name in
                       ("env_step", "obs_encode", "forward", "rollout_store",
                        "update")}
 
     @staticmethod
-    def _normalize_opponents(specs: tuple[str, ...]) -> tuple[str, str, str]:
+    def _normalize_opponents(specs: tuple[str, ...]) -> tuple[str, ...]:
         if len(specs) == 1:
             specs = specs * 3
-        if len(specs) != 3:
-            raise ValueError("opponents must contain one spec or exactly three")
+        if not specs:
+            raise ValueError("opponents must contain at least one spec")
         allowed = {"random", "self", "ab1", "ab2"}
         for spec in specs:
             if spec not in allowed and not spec.startswith("checkpoint:"):
                 raise ValueError(f"unsupported vectorized opponent: {spec}")
-        return tuple(specs)  # type: ignore[return-value]
+        return tuple(specs)
 
     def _anchor_beta(self) -> float:
         if not self.anchor:
@@ -245,6 +329,45 @@ class BatchedTrainer:
         return (self.config.anchor_coef
                 + progress * (self.config.anchor_coef_final
                               - self.config.anchor_coef))
+
+    def _load_resume(self, path: str) -> None:
+        """Restore optimizer, decision counters, and RNG so a relaunch
+        continues the anchor-beta anneal and optimizer state seamlessly.
+        Backward compatible: fields absent from older checkpoints are skipped.
+        """
+        ckpt = torch.load(path, map_location=self.device, weights_only=False)
+        if "optimizer_state" in ckpt:
+            self.optimizer.load_state_dict(ckpt["optimizer_state"])
+        self.learner_decisions = int(
+            ckpt.get("learner_decisions", self.learner_decisions))
+        self.total_decisions = int(
+            ckpt.get("total_decisions", self.total_decisions))
+        self.updates = int(ckpt.get("updates", self.updates))
+        self.episodes = int(ckpt.get("episodes", self.episodes))
+        np_state = ckpt.get("np_rng_state")
+        if np_state is not None:
+            try:
+                self.rng.bit_generator.state = np_state
+            except (ValueError, KeyError, TypeError):
+                np_state = None
+        torch_state = ckpt.get("torch_rng_state")
+        if torch_state is not None:
+            torch.set_rng_state(torch_state.to("cpu", torch.uint8))
+        cuda_state = ckpt.get("cuda_rng_state")
+        if cuda_state is not None and torch.cuda.is_available():
+            try:
+                torch.cuda.set_rng_state_all(
+                    [s.to("cpu", torch.uint8) for s in cuda_state])
+            except (RuntimeError, ValueError, TypeError):
+                pass
+        print(json.dumps({"resume": {
+            "path": str(path),
+            "learner_decisions": self.learner_decisions,
+            "total_learner_decisions": self.config.total_learner_decisions,
+            "anchor_beta": self._anchor_beta(),
+            "optimizer_restored": "optimizer_state" in ckpt,
+            "rng_restored": bool(np_state is not None),
+        }}, sort_keys=True), flush=True)
 
     def _encode(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Return current players, policy slots, and legal bool masks."""
@@ -682,28 +805,38 @@ class BatchedTrainer:
 
         start = time.perf_counter()
         last_log = start
-        while True:
-            self.collect_step(store_rollout=not benchmark_only)
-            if not benchmark_only and self._completed >= self.config.rollout_decisions:
-                self.update_ppo()
-            now = time.perf_counter()
-            if log_callback is not None and now - last_log >= log_interval_seconds:
-                log_callback(self.summary(now - start))
-                last_log = now
-            if duration_seconds and now - start >= duration_seconds:
-                break
-            if max_learner_decisions and self.learner_decisions >= max_learner_decisions:
-                break
-            if not duration_seconds and not max_learner_decisions:
-                raise ValueError("duration_seconds or max_learner_decisions is required")
+        interrupted = False
+        try:
+            while True:
+                self.collect_step(store_rollout=not benchmark_only)
+                if not benchmark_only and self._completed >= self.config.rollout_decisions:
+                    self.update_ppo()
+                now = time.perf_counter()
+                if log_callback is not None and now - last_log >= log_interval_seconds:
+                    log_callback(self.summary(now - start))
+                    last_log = now
+                if duration_seconds and now - start >= duration_seconds:
+                    break
+                if (max_learner_decisions
+                        and self.learner_decisions >= max_learner_decisions):
+                    break
+                if not duration_seconds and not max_learner_decisions:
+                    raise ValueError(
+                        "duration_seconds or max_learner_decisions is required"
+                    )
+        except KeyboardInterrupt:
+            interrupted = True
 
-        if (not benchmark_only and self._completed >= self.config.batch_size
+        if (not interrupted and not benchmark_only
+                and self._completed >= self.config.batch_size
                 and (not duration_seconds or time.perf_counter() - start < duration_seconds * 1.05)):
             self.update_ppo()
         if self.device.type == "cuda":
             torch.cuda.synchronize(self.device)
         wall = time.perf_counter() - start
-        return self.summary(wall)
+        summary = self.summary(wall)
+        summary["interrupted"] = interrupted
+        return summary
 
     def save(self, path: str | Path, extra: dict[str, Any] | None = None) -> None:
         path = Path(path)
@@ -713,6 +846,15 @@ class BatchedTrainer:
             "optimizer_state": self.optimizer.state_dict(),
             "config": asdict(self.config),
             "learner_decisions": self.learner_decisions,
+            "total_decisions": self.total_decisions,
+            "updates": self.updates,
+            "episodes": self.episodes,
+            "np_rng_state": self.rng.bit_generator.state,
+            "torch_rng_state": torch.get_rng_state(),
+            "cuda_rng_state": (
+                torch.cuda.get_rng_state_all()
+                if torch.cuda.is_available() else None
+            ),
             "extra": extra or {},
         }
         torch.save(payload, path)
