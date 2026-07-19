@@ -74,3 +74,10 @@ observation construction **above** the locked legal state (belief features per
 DR-001); action representation **above** the locked engine API; approved search
 components. These are where research happens and `check_frozen.sh` must stay
 silent on them.
+
+## Freeze bump history
+
+- **v1 → v1.1 (2026-07-19):** `bin/train_smoke.sh` W&B project routing
+  (`goodsettler` → `goodsettler-rl`) + guard re-baseline (`check_frozen.sh`
+  default base `substrate-v1` → `substrate-v1.1`). Non-eval-visible
+  (no rules/obs/evaluator/seeds/promotion change); no ladder-version bump.

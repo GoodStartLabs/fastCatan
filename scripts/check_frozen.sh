@@ -5,9 +5,9 @@
 # The lock catches drift even with no git history (exported tree); the tag-diff
 # catches new files added under a frozen prefix. See IMMUTABLE.md.
 #
-#   scripts/check_frozen.sh [base-ref]     # default base: substrate-v1
+#   scripts/check_frozen.sh [base-ref]     # default base: substrate-v1.1
 set -euo pipefail
-BASE="${1:-substrate-v1}"
+BASE="${1:-substrate-v1.1}"
 cd "$(git rev-parse --show-toplevel)"
 
 # Immutable path prefixes / exact files. The research surface under models/ is
