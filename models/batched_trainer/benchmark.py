@@ -13,6 +13,9 @@ from models.batched_trainer.trainer import BatchedTrainer, TrainerConfig
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--env-counts", default="1000,2000,4000")
+    p.add_argument("--env-workers", type=int, default=0,
+                   help="shared-memory env process count; 0 is in-process")
+    p.add_argument("--split-env-affinity", action="store_true")
     p.add_argument("--seconds", type=float, default=15.0)
     p.add_argument("--floor", type=float, default=100000.0)
     p.add_argument("--seed", type=int, default=0)
@@ -35,6 +38,8 @@ def main() -> None:
     for i, count in enumerate(counts):
         trainer = BatchedTrainer(TrainerConfig(
             num_envs=count,
+            env_workers=args.env_workers,
+            split_env_affinity=args.split_env_affinity,
             seed=args.seed + i * 1009,
             device=args.device,
             hidden=hidden,
@@ -47,6 +52,7 @@ def main() -> None:
         )
         result["floor"] = args.floor
         result["floor_pass"] = result["learner_decisions_per_s"] >= args.floor
+        trainer.close()
         results.append(result)
         print(json.dumps(result, sort_keys=True), flush=True)
     payload = {"results": results, "all_pass": all(r["floor_pass"] for r in results)}

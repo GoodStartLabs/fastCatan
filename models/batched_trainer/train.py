@@ -27,6 +27,12 @@ def _opponents(value: str) -> tuple[str, ...]:
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--num-envs", type=int, default=4000)
+    p.add_argument("--env-workers", type=int, default=0,
+                   help="shared-memory BatchedEnv processes; 0 keeps the "
+                        "single-process compatibility path")
+    p.add_argument("--split-env-affinity", action="store_true",
+                   help="reserve the highest offered CPU for the learner and "
+                        "restrict env workers to the remaining CPUs")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cuda")
     p.add_argument("--hidden", default="512,512,256")
@@ -53,6 +59,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--anchor-coef", type=float, default=0.0)
     p.add_argument("--anchor-coef-final", type=float, default=0.0)
     p.add_argument("--total-learner-decisions", type=int, default=100_000_000)
+    p.add_argument("--win-rate-window-episodes", type=int, default=10_000)
     p.add_argument("--benchmark-only", action="store_true")
     p.add_argument("--warmup-steps", type=int, default=20)
     p.add_argument("--torch-threads", type=int, default=1)
@@ -86,6 +93,8 @@ def main() -> None:
 
     cfg = TrainerConfig(
         num_envs=args.num_envs,
+        env_workers=args.env_workers,
+        split_env_affinity=args.split_env_affinity,
         seed=args.seed,
         device=args.device,
         hidden=_hidden(args.hidden),
@@ -107,6 +116,7 @@ def main() -> None:
         anchor_coef=args.anchor_coef,
         anchor_coef_final=args.anchor_coef_final,
         total_learner_decisions=args.total_learner_decisions,
+        win_rate_window_episodes=args.win_rate_window_episodes,
     )
     trainer = BatchedTrainer(cfg)
 
@@ -121,8 +131,15 @@ def main() -> None:
             notes=args.wandb_notes or None,
             mode=args.wandb_mode,
             config=asdict(cfg),
-            tags=["batched-trainer", "spec-3.2"],
+            tags=[
+                "batched-trainer",
+                "spec-3.2b" if args.env_workers else "spec-3.2",
+            ],
         )
+        run.define_metric("learner_decisions")
+        run.define_metric("rollout/*", step_metric="learner_decisions")
+        run.define_metric("train/*", step_metric="learner_decisions")
+        run.define_metric("throughput/*", step_metric="learner_decisions")
 
     promotion_before = None
     if args.promotion_games:
@@ -133,7 +150,7 @@ def main() -> None:
         if run is not None:
             run.log({"promotion/win_rate": promotion_before,
                      "promotion/no_winner": before_no_winner,
-                     "learner_decisions": 0})
+                     "learner_decisions": trainer.learner_decisions})
 
     low_throughput_logs = 0
     high_entropy_logs = 0
@@ -143,11 +160,17 @@ def main() -> None:
         print(json.dumps({"progress": values}, sort_keys=True), flush=True)
         if run is not None:
             payload = {
+                "learner_decisions": values["learner_decisions"],
                 "throughput/learner_decisions_per_s": values["learner_decisions_per_s"],
                 "throughput/total_decisions_per_s": values["total_decisions_per_s"],
-                "throughput/learner_decisions": values["learner_decisions"],
                 "rollout/entropy": values["entropy"],
                 "rollout/episodes": values["episodes"],
+                "rollout/terminal_episodes": values["terminal_episodes"],
+                "rollout/win_rate": values["win_rate"],
+                "rollout/mean_reward": values["mean_reward"],
+                "rollout/rolling_win_rate": values["rolling_win_rate"],
+                "rollout/rolling_reward": values["rolling_reward"],
+                "rollout/rolling_episodes": values["rolling_episodes"],
                 "gpu/memory_allocated_mb": values.get("gpu_mem_allocated_mb", 0.0),
                 "gpu/util_percent": values.get("gpu_util_percent_sample", 0.0),
                 "gpu/memory_used_mb": values.get("gpu_memory_used_mb_sample", 0.0),
@@ -239,6 +262,7 @@ def main() -> None:
         run.summary.update(summary)
         summary["wandb_url"] = run.url
         run.finish()
+    trainer.close()
 
     print("BATCHED_TRAINER_RESULT=" + json.dumps(summary, sort_keys=True), flush=True)
     if args.assert_floor and not summary["floor_pass"]:

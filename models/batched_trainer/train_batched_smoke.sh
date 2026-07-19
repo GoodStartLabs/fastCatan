@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Spec 3.2 one-command gate.  This lives on the editable research surface;
+# Spec 3.2b one-command gate.  This lives on the editable research surface;
 # substrate-v1 freezes every bin/ path, including additions.
 set -euo pipefail
 
@@ -23,6 +23,9 @@ export MKL_NUM_THREADS=1
 
 SMOKE_SECONDS="${BATCHED_SMOKE_SECONDS:-1800}"
 SMOKE_ENVS="${BATCHED_SMOKE_ENVS:-4000}"
+DEFAULT_ENV_WORKERS="$(( (OMP_NUM_THREADS + 1) / 2 ))"
+ENV_WORKERS="${BATCHED_ENV_WORKERS:-$DEFAULT_ENV_WORKERS}"
+THROUGHPUT_FLOOR="${BATCHED_THROUGHPUT_FLOOR:-250000}"
 LEAK_GAMES="${BATCHED_LEAK_GAMES:-10000}"
 LEAK_WORKERS="${BATCHED_LEAK_WORKERS:-$OMP_NUM_THREADS}"
 PROMOTION_GAMES="${BATCHED_PROMOTION_GAMES:-256}"
@@ -43,12 +46,14 @@ fi
 
 python -m models.batched_trainer.train \
   --num-envs "$SMOKE_ENVS" \
+  --env-workers "$ENV_WORKERS" \
+  --split-env-affinity \
   --duration-seconds "$SMOKE_SECONDS" \
   --opponents random \
   --rollout-decisions 262144 \
   --batch-size 65536 \
   --update-epochs 1 \
-  --assert-floor 100000 \
+  --assert-floor "$THROUGHPUT_FLOOR" \
   --promotion-games "$PROMOTION_GAMES" \
   --assert-promotion-moves \
   --wandb-mode online \

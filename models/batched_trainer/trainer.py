@@ -29,6 +29,7 @@ from models.batched_trainer.losses import (
     PPOBatch,
     PPOLoss,
 )
+from models.batched_trainer.multiprocess_env import ProcessBatchedEnv
 from models.ckpt import write_stamp
 
 MASK_BYTES = (fc.NUM_ACTIONS + 7) // 8
@@ -79,6 +80,8 @@ def compute_gae(
 @dataclass
 class TrainerConfig:
     num_envs: int = 4000
+    env_workers: int = 0
+    split_env_affinity: bool = False
     seed: int = 0
     device: str = "cuda"
     hidden: tuple[int, ...] = (512, 512, 256)
@@ -100,6 +103,7 @@ class TrainerConfig:
     anchor_coef: float = 0.0
     anchor_coef_final: float = 0.0
     total_learner_decisions: int = 100_000_000
+    win_rate_window_episodes: int = 10_000
 
 
 class SeatAssignments:
@@ -257,20 +261,44 @@ class BatchedTrainer:
                 self.opponent_nets[spec] = net
 
         n = config.num_envs
-        self.env = fc.BatchedEnv(n, config.seed)
-        self.env.reset()
+        self.process_env: ProcessBatchedEnv | None = None
+        if config.env_workers:
+            self.process_env = ProcessBatchedEnv(
+                n, config.seed, config.env_workers,
+                split_affinity=config.split_env_affinity,
+            )
+            self.env = self.process_env
+        else:
+            self.env = fc.BatchedEnv(n, config.seed)
+            self.env.reset()
         self.assignments = SeatAssignments(
             n, self.rng, opponent_policy_count=len(self.opponent_specs)
         )
 
-        self.sigs = np.empty((n, fc.SIG_INTS), dtype=np.int32)
-        self.povs = np.empty(n, dtype=np.uint8)
-        self.masks = np.empty((n, fc.MASK_WORDS), dtype=np.uint64)
-        self.obs = np.empty((n, fc.OBS_SIZE), dtype=np.float32)
-        self.actions = np.empty(n, dtype=np.uint32)
-        self.rewards = np.empty(n, dtype=np.float32)
-        self.dones = np.empty(n, dtype=np.uint8)
-        self.ab_actions = np.empty(n, dtype=np.uint32)
+        if self.process_env is not None:
+            self.sigs = self.process_env.sigs
+            self.povs = self.process_env.povs
+            self.masks = self.process_env.masks
+            self.legal = self.process_env.legal
+            self.policies = np.empty(n, dtype=np.uint8)
+            self.obs = self.process_env.obs
+            self.actions = self.process_env.actions
+            self.rewards = self.process_env.rewards
+            self.dones = self.process_env.dones
+            self.winners = self.process_env.winners
+            self.ab_actions = self.process_env.ab_actions
+        else:
+            self.sigs = np.empty((n, fc.SIG_INTS), dtype=np.int32)
+            self.povs = np.empty(n, dtype=np.uint8)
+            self.masks = np.empty((n, fc.MASK_WORDS), dtype=np.uint64)
+            self.legal = np.empty((n, fc.NUM_ACTIONS), dtype=bool)
+            self.policies = np.empty(n, dtype=np.uint8)
+            self.obs = np.empty((n, fc.OBS_SIZE), dtype=np.float32)
+            self.actions = np.empty(n, dtype=np.uint32)
+            self.rewards = np.empty(n, dtype=np.float32)
+            self.dones = np.empty(n, dtype=np.uint8)
+            self.winners = np.full(n, NO_PLAYER, dtype=np.uint8)
+            self.ab_actions = np.empty(n, dtype=np.uint32)
         self._stage_obs_t = None
         self._stage_mask_t = None
         self._stage_obs_np = None
@@ -301,6 +329,19 @@ class BatchedTrainer:
         self.episodes = 0
         self.entropy_sum = 0.0
         self.entropy_count = 0
+        window = config.win_rate_window_episodes
+        if window < 1:
+            raise ValueError("win_rate_window_episodes must be positive")
+        self._terminal_window = np.empty(window, dtype=np.float32)
+        self._terminal_window_count = 0
+        self._terminal_window_pos = 0
+        self.terminal_metric_episodes = 0
+        self.terminal_wins = 0
+        self.terminal_reward_sum = 0.0
+
+        self._measurement_learner_start = 0
+        self._measurement_total_start = 0
+        self._measurement_episode_start = 0
 
         if config.resume:
             self._load_resume(config.resume)
@@ -344,6 +385,26 @@ class BatchedTrainer:
             ckpt.get("total_decisions", self.total_decisions))
         self.updates = int(ckpt.get("updates", self.updates))
         self.episodes = int(ckpt.get("episodes", self.episodes))
+        terminal_metrics = ckpt.get("terminal_metrics", {})
+        self.terminal_metric_episodes = int(
+            terminal_metrics.get("episodes", self.terminal_metric_episodes)
+        )
+        self.terminal_wins = int(
+            terminal_metrics.get("wins", self.terminal_wins)
+        )
+        self.terminal_reward_sum = float(
+            terminal_metrics.get("reward_sum", self.terminal_reward_sum)
+        )
+        saved_window = np.asarray(
+            terminal_metrics.get("window", ()), dtype=np.float32
+        )
+        if saved_window.size:
+            saved_window = saved_window[-self._terminal_window.size:]
+            self._terminal_window[:saved_window.size] = saved_window
+            self._terminal_window_count = saved_window.size
+            self._terminal_window_pos = (
+                saved_window.size % self._terminal_window.size
+            )
         np_state = ckpt.get("np_rng_state")
         if np_state is not None:
             try:
@@ -369,19 +430,80 @@ class BatchedTrainer:
             "rng_restored": bool(np_state is not None),
         }}, sort_keys=True), flush=True)
 
+    def _terminal_window_values(self) -> np.ndarray:
+        count = self._terminal_window_count
+        if count < self._terminal_window.size:
+            return self._terminal_window[:count].copy()
+        pos = self._terminal_window_pos
+        return np.concatenate(
+            (self._terminal_window[pos:], self._terminal_window[:pos])
+        )
+
+    def _record_terminal_rewards(self, rewards: np.ndarray) -> None:
+        rewards = np.asarray(rewards, dtype=np.float32)
+        if not rewards.size:
+            return
+        self.terminal_metric_episodes += rewards.size
+        self.terminal_wins += int(np.count_nonzero(rewards > 0))
+        self.terminal_reward_sum += float(rewards.sum())
+
+        capacity = self._terminal_window.size
+        if rewards.size >= capacity:
+            self._terminal_window[:] = rewards[-capacity:]
+            self._terminal_window_count = capacity
+            self._terminal_window_pos = 0
+            return
+        indices = (
+            self._terminal_window_pos + np.arange(rewards.size)
+        ) % capacity
+        self._terminal_window[indices] = rewards
+        self._terminal_window_pos = (
+            self._terminal_window_pos + rewards.size
+        ) % capacity
+        self._terminal_window_count = min(
+            capacity, self._terminal_window_count + rewards.size
+        )
+
+    def _terminal_summary(self) -> dict[str, float | int]:
+        window = self._terminal_window_values()
+        rolling_win_rate = (
+            float(np.mean(window > 0)) if window.size else 0.0
+        )
+        rolling_reward = float(window.mean()) if window.size else 0.0
+        count = self.terminal_metric_episodes
+        return {
+            "rolling_win_rate": rolling_win_rate,
+            "rolling_reward": rolling_reward,
+            "rolling_episodes": int(window.size),
+            "win_rate": self.terminal_wins / max(count, 1),
+            "mean_reward": self.terminal_reward_sum / max(count, 1),
+            "terminal_episodes": count,
+        }
+
     def _encode(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Return current players, policy slots, and legal bool masks."""
-        self.env.write_sigs(self.sigs)
-        np.copyto(self.povs, self.sigs[:, 0], casting="unsafe")
-        self.env.write_masks(self.masks)
-        # Explicit POV batch is the actor path; never write_obs_full.
-        self.env.write_obs_pov_batch(self.povs, self.obs)
-        legal = np.unpackbits(
-            self.masks.view(np.uint8), axis=1, bitorder="little"
-        )[:, :fc.NUM_ACTIONS].astype(bool, copy=False)
+        if self.process_env is not None:
+            # One barrier lets every shard write sigs, masks, and current-seat
+            # observations concurrently into its global shared-memory rows.
+            self.process_env.observe()
+        else:
+            self.env.write_sigs(self.sigs)
+            np.copyto(self.povs, self.sigs[:, 0], casting="unsafe")
+            self.env.write_masks(self.masks)
+            # Explicit POV batch is the actor path; never write_obs_full.
+            self.env.write_obs_pov_batch(self.povs, self.obs)
+        if self.process_env is not None:
+            legal = self.legal
+        else:
+            legal = np.unpackbits(
+                self.masks.view(np.uint8), axis=1, bitorder="little"
+            )[:, :fc.NUM_ACTIONS].astype(bool, copy=False)
         if not bool(legal.any(axis=1).all()):
             raise RuntimeError("empty legal-action mask")
-        policies = self.assignments.current_policies(self.povs)
+        np.copyto(
+            self.policies, self.assignments.current_policies(self.povs)
+        )
+        policies = self.policies
         return self.povs, policies, legal
 
     @torch.no_grad()
@@ -520,7 +642,9 @@ class BatchedTrainer:
         self.pending_slot[rows] = slots
         self._rollout_size = end
 
-    def collect_step(self, store_rollout: bool = True) -> int:
+    def collect_step(
+        self, store_rollout: bool = True, count_metrics: bool = True
+    ) -> int:
         t0 = time.perf_counter()
         _players, policies, legal = self._encode()
         self.times["obs_encode"] += time.perf_counter() - t0
@@ -593,15 +717,19 @@ class BatchedTrainer:
         self.env.step(self.actions, self.rewards, self.dones)
         done_rows = np.flatnonzero(self.dones)
         if done_rows.size:
-            winners = np.fromiter(
-                (self.env.last_winner(int(i)) for i in done_rows),
-                dtype=np.uint8,
-                count=done_rows.size,
+            if self.process_env is not None:
+                winners = self.winners[done_rows]
+            else:
+                winners = np.fromiter(
+                    (self.env.last_winner(int(i)) for i in done_rows),
+                    dtype=np.uint8,
+                    count=done_rows.size,
+                )
+                self.winners[done_rows] = winners
+            rewards = terminal_rewards(
+                winners, self.assignments.learner_seats[done_rows]
             )
             if store_rollout:
-                rewards = terminal_rewards(
-                    winners, self.assignments.learner_seats[done_rows]
-                )
                 self._complete_pending(
                     done_rows,
                     rewards,
@@ -609,15 +737,18 @@ class BatchedTrainer:
                     np.zeros(done_rows.size, dtype=np.float32),
                 )
                 self.pending_slot[done_rows] = -1
+            if count_metrics:
+                self._record_terminal_rewards(rewards)
+                self.episodes += done_rows.size
             self.assignments.reshuffle(done_rows)
-            self.episodes += done_rows.size
         self.times["env_step"] += time.perf_counter() - t0
 
         count = learner_rows.size
-        self.total_decisions += self.config.num_envs
-        self.learner_decisions += count
-        self.entropy_sum += float(learner_entropy.sum())
-        self.entropy_count += count
+        if count_metrics:
+            self.total_decisions += self.config.num_envs
+            self.learner_decisions += count
+            self.entropy_sum += float(learner_entropy.sum())
+            self.entropy_count += count
         return count
 
     def _rollout_arrays(self) -> dict[str, np.ndarray]:
@@ -738,34 +869,44 @@ class BatchedTrainer:
         return {key: float(value) for key, value in metrics.items()}
 
     def reset_measurements(self) -> None:
-        self.total_decisions = 0
-        self.learner_decisions = 0
+        self._measurement_total_start = self.total_decisions
+        self._measurement_learner_start = self.learner_decisions
+        self._measurement_episode_start = self.episodes
         self.entropy_sum = 0.0
         self.entropy_count = 0
-        self.episodes = 0
         for key in self.times:
             self.times[key] = 0.0
 
     def summary(self, wall_seconds: float) -> dict[str, Any]:
         measured = sum(self.times.values())
+        measured_learner = (
+            self.learner_decisions - self._measurement_learner_start
+        )
+        measured_total = self.total_decisions - self._measurement_total_start
+        measured_episodes = self.episodes - self._measurement_episode_start
         summary: dict[str, Any] = {
             "num_envs": self.config.num_envs,
+            "env_workers": self.config.env_workers,
             "wall_seconds": wall_seconds,
             "learner_decisions": self.learner_decisions,
             "total_decisions": self.total_decisions,
-            "learner_decisions_per_s": self.learner_decisions / max(wall_seconds, 1e-9),
-            "total_decisions_per_s": self.total_decisions / max(wall_seconds, 1e-9),
+            "measurement_learner_decisions": measured_learner,
+            "measurement_total_decisions": measured_total,
+            "learner_decisions_per_s": measured_learner / max(wall_seconds, 1e-9),
+            "total_decisions_per_s": measured_total / max(wall_seconds, 1e-9),
             "episodes": self.episodes,
+            "measurement_episodes": measured_episodes,
             "updates": self.updates,
             "entropy": self.entropy_sum / max(self.entropy_count, 1),
             "time_s": dict(self.times),
             "time_ms_per_step": {
-                key: value / max(self.total_decisions / self.config.num_envs, 1) * 1000
+                key: value / max(measured_total / self.config.num_envs, 1) * 1000
                 for key, value in self.times.items()
             },
             "unattributed_s": max(0.0, wall_seconds - measured),
             "last_update": self.last_update_metrics,
         }
+        summary.update(self._terminal_summary())
         if self.device.type == "cuda":
             summary["gpu_mem_allocated_mb"] = (
                 torch.cuda.max_memory_allocated(self.device) / 2**20
@@ -792,7 +933,7 @@ class BatchedTrainer:
         log_callback=None,
     ) -> dict[str, Any]:
         for _ in range(warmup_steps):
-            self.collect_step(store_rollout=False)
+            self.collect_step(store_rollout=False, count_metrics=False)
         if self.device.type == "cuda":
             torch.cuda.synchronize(self.device)
             torch.cuda.reset_peak_memory_stats(self.device)
@@ -855,10 +996,26 @@ class BatchedTrainer:
                 torch.cuda.get_rng_state_all()
                 if torch.cuda.is_available() else None
             ),
+            "terminal_metrics": {
+                "episodes": self.terminal_metric_episodes,
+                "wins": self.terminal_wins,
+                "reward_sum": self.terminal_reward_sum,
+                "window": self._terminal_window_values(),
+            },
             "extra": extra or {},
         }
         torch.save(payload, path)
         write_stamp(path)
+
+    def close(self) -> None:
+        if self.process_env is not None:
+            self.process_env.close()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     @staticmethod
     def write_summary(path: str | Path, summary: dict[str, Any]) -> None:
