@@ -87,40 +87,84 @@ def _play_games_worker(payload: dict) -> dict:
     decisions = 0
     winners = []
 
-    for _ in range(payload["n_games"]):
+    # Optional per-game wall-clock watchdog. Some seat-0 MCTS searches enter a
+    # non-terminating loop on rare game states (normal games finish in seconds);
+    # such a game pins a worker at 100% CPU forever and stalls the whole shard.
+    # When STAGE3_GAME_TIMEOUT_S>0 we abandon any game that exceeds it, roll back
+    # its partial seat-0 records, and continue. Default (unset/0) = original path.
+    import signal as _signal
+    _game_timeout = int(os.environ.get("STAGE3_GAME_TIMEOUT_S", "0"))
+
+    class _GameTimeout(Exception):
+        pass
+
+    def _on_alarm(_signum, _frame):
+        raise _GameTimeout()
+
+    if _game_timeout > 0:
+        _signal.signal(_signal.SIGALRM, _on_alarm)
+    _skipped = 0
+
+    for _gi in range(payload["n_games"]):
         env.reset(seed_seq.getrandbits(64))
         recs: list[int] = []   # sample indices for this game (all seat 0)
-        for _ply in range(40000):
-            env.action_mask(mask_buf)
-            mask, legal = _unpack(mask_buf)
-            mask, legal = filter_p2p(mask, p2p)
-            if not legal:
-                break
-            cp = env.current_player
-            if cp != 0:
-                a = opp(env, cp, legal)
-                _r, done = env.step(a)
+        _pre = (len(obs_l), len(act_l), len(mask_l), len(rootv_l))
+        if _game_timeout > 0:
+            _signal.alarm(_game_timeout)
+        try:
+            for _ply in range(40000):
+                env.action_mask(mask_buf)
+                mask, legal = _unpack(mask_buf)
+                mask, legal = filter_p2p(mask, p2p)
+                if not legal:
+                    break
+                cp = env.current_player
+                if cp != 0:
+                    a = opp(env, cp, legal)
+                    _r, done = env.step(a)
+                    if done:
+                        break
+                    continue
+                if len(legal) == 1:
+                    _r, done = env.step(legal[0])
+                    if done:
+                        break
+                    continue
+                # seat-0 hybrid decision: search, record obs + chosen move + root value.
+                env.write_obs(0, obs_buf)
+                action, _pi, _m = mcts.choose(env.snapshot(), temperature=0.0,
+                                              add_root_noise=False)
+                obs_l.append(obs_buf.astype(np.float16))
+                act_l.append(np.uint16(action))
+                mask_l.append(np.packbits(mask))
+                rootv_l.append(np.float32(mcts.last_root_value))
+                recs.append(len(obs_l) - 1)
+                decisions += 1
+                _r, done = env.step(int(action))
                 if done:
                     break
-                continue
-            if len(legal) == 1:
-                _r, done = env.step(legal[0])
-                if done:
-                    break
-                continue
-            # seat-0 hybrid decision: search, record obs + chosen move + root value.
-            env.write_obs(0, obs_buf)
-            action, _pi, _m = mcts.choose(env.snapshot(), temperature=0.0,
-                                          add_root_noise=False)
-            obs_l.append(obs_buf.astype(np.float16))
-            act_l.append(np.uint16(action))
-            mask_l.append(np.packbits(mask))
-            rootv_l.append(np.float32(mcts.last_root_value))
-            recs.append(len(obs_l) - 1)
-            decisions += 1
-            _r, done = env.step(int(action))
-            if done:
-                break
+        except _GameTimeout:
+            del obs_l[_pre[0]:]
+            del act_l[_pre[1]:]
+            del mask_l[_pre[2]:]
+            del rootv_l[_pre[3]:]
+            decisions -= len(recs)
+            _skipped += 1
+            # Rebuild the search from clean state: the interrupt unwound out of
+            # mcts.choose mid-simulation, so discard any partial tree to keep
+            # subsequent games' recorded root values trustworthy. (net is reused.)
+            mcts = MCTSvsFixed(net, device="cpu", sims=sims, c_puct=1.5,
+                               dirichlet_frac=0.0, seed=payload["seed"] ^ 0xA11CE,
+                               suppress_p2p=True, ab_depth=depth, ab_prune=False,
+                               leaf_eval="ab_value", ab_value_scale=scale,
+                               opp_model="alphabeta")
+            print(f"[stage3-watchdog] shard {payload['shard_id']} game {_gi} "
+                  f"exceeded {_game_timeout}s (non-terminating); abandoned, "
+                  f"{_skipped} skipped so far", flush=True)
+            continue
+        finally:
+            if _game_timeout > 0:
+                _signal.alarm(0)
 
         vps = np.array([env.player_vp(p) for p in range(4)], dtype=np.uint8)
         winner = next((p for p in range(4) if vps[p] >= WIN_VP), -1)
